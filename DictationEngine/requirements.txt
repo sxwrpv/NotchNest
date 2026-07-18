@@ -1,0 +1,25 @@
+# Murmur — offline voice dictation for macOS (Apple Silicon)
+# Python 3.11+ required. Install into ./.venv (see README.md).
+
+# ASR (Metal-accelerated Whisper)
+mlx-whisper>=0.4.0
+
+# Local LLM fallback backend (in-process, used when Ollama isn't installed)
+mlx-lm>=0.20.0
+
+# Audio capture + file I/O for tests
+sounddevice>=0.4.6
+soundfile>=0.12.1
+numpy
+
+# macOS integration
+pyobjc-framework-Cocoa>=10.0
+pyobjc-framework-Quartz>=10.0
+rumps>=0.4.0
+
+# Config + Ollama HTTP API
+pyyaml>=6.0
+requests>=2.31
+
+# Memory measurement / diagnostics
+psutil>=5.9

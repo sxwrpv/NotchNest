@@ -1,0 +1,15 @@
+# Build products
+.build/
+NotchNest.app/
+
+# Dictation engine: local Python env (recreate with requirements.txt)
+DictationEngine/.venv/
+**/__pycache__/
+*.pyc
+
+# Legacy standalone Murmur.app packaging (pre-merge, machine-specific paths)
+DictationEngine/packaging/
+
+# OS noise
+.DS_Store
+*.log

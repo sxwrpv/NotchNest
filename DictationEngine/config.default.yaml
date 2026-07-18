@@ -1,0 +1,109 @@
+# Murmur configuration — this file lives at ~/.murmur/config.yaml
+# It hot-reloads on save: edit, save, and the running app picks it up within a second.
+# Any key you delete falls back to the built-in default.
+
+audio:
+  sample_rate: 16000
+  preroll_ms: 500          # audio kept from *before* the hotkey fires
+  always_on_capture: true  # required for pre-roll; set false to open mic only while recording
+  input_device: null       # null = system default microphone
+  min_utterance_s: 0.35    # recordings shorter than this are discarded
+
+hotkeys:
+  # Double-tap = toggle recording on/off. Press-and-hold = push-to-talk.
+  # Keys: fn, right_option, left_option, right_command, left_command,
+  #       right_control, left_control, right_shift, left_shift
+  dictation_key: fn
+  # Hold this while text is selected, speak an instruction ("make this formal"),
+  # release — the selection is replaced with the rewrite.
+  command_key: right_option
+  double_tap_window_ms: 400
+  hold_threshold_ms: 350
+
+asr:
+  # tiny.en | base.en | small.en | small | medium | large-v3-turbo |
+  # large-v3-turbo-q4, or any full HuggingFace repo id.
+  # large-v3-turbo-q4 (~450MB) is multilingual with strong Russian accuracy —
+  # same model as large-v3-turbo but 4-bit quantized: ~3x smaller, faster to
+  # load, near-identical output. small.en is the minimum-RAM English-only pick.
+  model: large-v3-turbo-q4
+  # auto = detect the language per dictation (mix English/Russian freely).
+  # Or pin one: en, ru, de, ... (English-only .en models ignore this).
+  language: auto
+  partials: true            # live partial transcript in the overlay while recording
+  partial_interval_ms: 1500
+  partial_window_s: 12
+
+llm:
+  # auto = use Ollama if running, else in-process MLX model, else rule-based cleanup.
+  backend: auto
+  cleanup_enabled: true
+  max_tokens: 1024
+  temperature: 0.15
+  ollama:
+    url: http://localhost:11434
+    model: qwen2.5:3b-instruct
+    keep_alive: 5m          # unload from RAM after 5 idle minutes (16GB machine!)
+  mlx:
+    model: mlx-community/Qwen2.5-3B-Instruct-4bit
+    idle_unload_s: 300      # same idea as keep_alive, for the in-process backend
+
+insertion:
+  mode: paste              # paste (reliable unicode) | type (per-keystroke fallback)
+  restore_clipboard: true  # put your old clipboard back after pasting
+  # Set true to keep the transcript on the clipboard after pasting (skips
+  # the restore above). "Copy Last Transcription" in the menus works
+  # regardless of this setting.
+  keep_on_clipboard: false
+  # false (default): text goes to the app you STARTED dictating in — if you
+  # switch windows mid-transcription Murmur switches back to it; if it can't,
+  # the text lands on the clipboard rather than in the wrong app.
+  # true: paste into whatever app is frontmost when processing finishes.
+  follow_focus: false
+  paste_delay_ms: 80
+
+dictionary:
+  # Terms fed to the ASR as biasing context AND protected in the final text.
+  entries:
+    - Murmur
+  # Post-transcription find/replace safety net (case-insensitive, whole words).
+  replacements: {}
+  #  "poly copy": "PolyCopy"
+  auto_learn: true         # learn from "Fix Last Transcription…" in the menu bar
+
+snippets:
+  {}
+  # Say the trigger phrase alone; the mapped text is inserted instead, e.g.
+  #  "insert my signature": "Best,\nYour Name"
+  #  "insert my email": "you@example.com"
+
+styles:
+  default: neutral         # neutral | formal | casual | any custom preset below
+  presets: {}
+  #  pirate: "Rewrite in the voice of a friendly pirate."
+  per_app: {}
+  # Bundle id -> style. Find a bundle id with:
+  #   osascript -e 'id of app "Mail"'
+  #  com.apple.mail: formal
+  #  com.tinyspeck.slackmacgap: casual
+
+overlay:
+  enabled: true
+  width: 400
+  # Keep the status pill on screen at all times (small dim dot when idle,
+  # full pill when listening/processing), not just during dictation.
+  # Set to false for the old behavior: pill only appears during a session.
+  # Also toggleable live from the menu bar ("Show Status Pill").
+  always_visible: true
+  # The pill is interactive: click it to start/stop dictation, hover for the
+  # style switcher (and a cancel ✕ during a session), drag to move it,
+  # right-click for a quick menu. Dragging writes the new anchor here:
+  #   position: {x: <center-x>, y: <bottom-y>}   (global screen coords,
+  #   origin bottom-left). Delete the position line to restore bottom-center.
+  position: null
+
+ui:
+  show_notifications: true
+
+logging:
+  level: INFO
