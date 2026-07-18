@@ -100,6 +100,7 @@ class NotchBridge:
             "start": self.controller.ptt_start,
             "stop": self.controller.ptt_stop,
             "cancel": self.controller.cancel,
+            "axdump": self._ax_dump_spotify,
         }
         fn = actions.get(cmd)
         if fn is None:
@@ -110,6 +111,80 @@ class NotchBridge:
             log.info("notch command dispatched: %s", cmd)
         except Exception:
             log.exception("notch command %s raised", cmd)
+
+    def _ax_dump_spotify(self):
+        """Debug helper: dump Spotify's accessibility buttons to
+        ~/.murmur/axdump.json. Runs with NotchNest's Accessibility grant since
+        this process is its child. Used to locate the Like button reliably."""
+        out_path = os.path.join(CONFIG_DIR, "axdump.json")
+        try:
+            from ApplicationServices import (
+                AXUIElementCreateApplication,
+                AXUIElementCopyAttributeValue,
+                AXUIElementSetAttributeValue,
+            )
+            import AppKit
+
+            apps = [a for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications()
+                    if a.bundleIdentifier() == "com.spotify.client"]
+            if not apps:
+                self._write_json(out_path, {"error": "spotify not running"})
+                return
+            root = AXUIElementCreateApplication(apps[0].processIdentifier())
+
+            def attr(el, name):
+                err, val = AXUIElementCopyAttributeValue(el, name, None)
+                return val if err == 0 else None
+
+            buttons = []
+            roles = {}
+
+            def walk(el, depth):
+                if depth > 40 or len(buttons) > 4000:
+                    return
+                role = str(attr(el, "AXRole") or "?")
+                roles[role] = roles.get(role, 0) + 1
+                if role in ("AXButton", "AXCheckBox", "AXToggle", "AXRadioButton"):
+                    buttons.append({
+                        "role": role,
+                        "title": str(attr(el, "AXTitle") or ""),
+                        "desc": str(attr(el, "AXDescription") or ""),
+                        "help": str(attr(el, "AXHelp") or ""),
+                    })
+                for child in (attr(el, "AXChildren") or []):
+                    walk(child, depth + 1)
+
+            # Chromium/CEF exposes the web a11y tree lazily, only after an
+            # assistive client pokes it — set the wake-up flags and retry.
+            windows = []
+            for attempt in range(4):
+                for flag in ("AXManualAccessibility", "AXEnhancedUserInterface"):
+                    try:
+                        AXUIElementSetAttributeValue(root, flag, True)
+                    except Exception:
+                        pass
+                time.sleep(2.0)
+                buttons.clear()
+                roles.clear()
+                windows = list(attr(root, "AXWindows") or [])
+                for window in windows:
+                    walk(window, 0)
+                if buttons:
+                    break
+            self._write_json(out_path, {
+                "windows": len(windows), "roles": roles, "buttons": buttons,
+            })
+            log.info("axdump: %d windows, %d buttons", len(windows), len(buttons))
+        except Exception as e:
+            log.exception("axdump failed")
+            self._write_json(out_path, {"error": repr(e)})
+
+    def _write_json(self, path, payload):
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False)
+        except Exception:
+            log.exception("axdump write failed")
 
     def _apply_setting(self, raw: str):
         """`set <dotted.key> <json-value>` — writes through the comment-

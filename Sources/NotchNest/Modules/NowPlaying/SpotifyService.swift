@@ -116,6 +116,22 @@ final class SpotifyService: ObservableObject {
 
     // MARK: - Local fallback (no Premium needed)
 
+    /// Unified log redacts dynamic NSLog strings as <private>, which made the
+    /// like path undebuggable — so the like machinery logs to a plain file.
+    private func nnlog(_ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let line = "\(stamp) \(message)\n"
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/NotchNest.log")
+        if let handle = FileHandle(forWritingAtPath: url.path) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
     /// Likes the current track by driving the Spotify desktop app itself.
     /// Strategy 1: find a "Save to Your Library / Liked Songs" item in Spotify's
     /// native menu bar and press it via Accessibility — works in the background
@@ -124,25 +140,53 @@ final class SpotifyService: ObservableObject {
     /// process, so Spotify never has to come to the front.
     private func localToggleLike(key: String) {
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        guard AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary) else {
+        let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
+        nnlog("like: start (trusted=\(trusted))")
+        guard trusted else {
             lastError = "Allow NotchNest in System Settings → Privacy & Security → Accessibility, then tap ♥ again."
             return
         }
         guard let app = NSRunningApplication
             .runningApplications(withBundleIdentifier: "com.spotify.client").first else {
+            nnlog("like: Spotify not running")
             lastError = "Spotify isn't running."
             return
         }
         let pid = app.processIdentifier
 
+        // 1. In-window Like button via AX — background press, no focus games.
+        switch pressLikeButton(pid: pid) {
+        case .pressed(let nowLiked):
+            likedCache[key] = nowLiked
+            lastError = nil
+            return
+        case .treeCold:
+            // CEF builds its a11y tree lazily after our wake-up poke; retry once.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard let self else { return }
+                if case .pressed(let nowLiked) = self.pressLikeButton(pid: pid) {
+                    self.likedCache[key] = nowLiked
+                    self.lastError = nil
+                } else {
+                    self.likeViaMenuOrKeystroke(key: key, app: app, pid: pid)
+                }
+            }
+            return
+        case .notFound:
+            break
+        }
+        likeViaMenuOrKeystroke(key: key, app: app, pid: pid)
+    }
+
+    private func likeViaMenuOrKeystroke(key: String, app: NSRunningApplication, pid: pid_t) {
         if let (item, willLike) = findLikeMenuItem(pid: pid),
            AXUIElementPerformAction(item, kAXPressAction as CFString) == .success {
-            NSLog("NotchNest like: pressed Spotify menu item (nowLiked=\(willLike))")
+            nnlog("like: pressed menu item (nowLiked=\(willLike))")
             likedCache[key] = willLike
             lastError = nil
             return
         }
-        NSLog("NotchNest like: no menu item — using ⌥⇧B keystroke")
+        nnlog("like: no menu item — using ⌥⇧B keystroke")
 
         // Spotify's CEF layer ignores background-posted key events, so use the
         // same pattern the dictation engine's injector uses: focus Spotify,
@@ -153,12 +197,12 @@ final class SpotifyService: ObservableObject {
         waitUntilFrontmost(app, attempts: 14) { [weak self] focused in
             guard let self else { return }
             guard focused else {
-                NSLog("NotchNest like: Spotify never became frontmost")
+                self.nnlog("like: Spotify never became frontmost")
                 self.lastError = "Couldn't focus Spotify to send the Like shortcut."
                 return
             }
             Self.postLikeShortcut()
-            NSLog("NotchNest like: sent ⌥⇧B to Spotify")
+            self.nnlog("like: sent ⌥⇧B to Spotify")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 if let previous, previous.bundleIdentifier != "com.spotify.client" {
                     previous.activate()
@@ -184,6 +228,91 @@ final class SpotifyService: ObservableObject {
             guard let self else { return }
             self.waitUntilFrontmost(app, attempts: attempts - 1, completion: completion)
         }
+    }
+
+    private enum LikeButtonResult {
+        case pressed(nowLiked: Bool)
+        case treeCold   // no windows / empty tree — CEF a11y not awake yet
+        case notFound   // tree scanned but no unambiguous Like button
+    }
+
+    /// Finds and presses the Like button inside Spotify's window through the
+    /// accessibility tree (works with Spotify in the background). Chromium
+    /// exposes web content to AX only after a wake-up poke, hence .treeCold.
+    private func pressLikeButton(pid: pid_t) -> LikeButtonResult {
+        let appElement = AXUIElementCreateApplication(pid)
+        for flag in ["AXManualAccessibility", "AXEnhancedUserInterface"] {
+            AXUIElementSetAttributeValue(appElement, flag as CFString, kCFBooleanTrue)
+        }
+
+        var windowsRef: CFTypeRef?
+        let winErr = AXUIElementCopyAttributeValue(
+            appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        let windows = windowsRef as? [AXUIElement] ?? []
+        nnlog("like: AXWindows err=\(winErr.rawValue) count=\(windows.count)")
+        guard !windows.isEmpty else { return .treeCold }
+
+        // Add-state phrasings across locales; press = LIKE. If the track is
+        // already saved the button reads differently ("Added…"/"Remove…") —
+        // pressing that can open a playlist picker, so we leave it to ⌥⇧B.
+        let addPatterns = ["add to liked songs", "save to your library",
+                           "добавить в любимые", "add to your liked songs"]
+        let likedPatterns = ["remove from liked", "added to liked", "remove from your library",
+                             "удалить из любимых", "добавлено"]
+
+        var addButton: AXUIElement?
+        var alreadyLiked = false
+        var candidates: [String] = []
+        var visited = 0
+
+        func search(_ element: AXUIElement, depth: Int) {
+            if depth > 40 || visited > 8000 || addButton != nil { return }
+            visited += 1
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+            if let role = roleRef as? String,
+               role == kAXButtonRole as String || role == "AXCheckBox" || role == "AXToggle" {
+                let text = [axText(element, kAXTitleAttribute),
+                            axText(element, kAXDescriptionAttribute),
+                            axText(element, kAXHelpAttribute)]
+                    .compactMap { $0 }.joined(separator: " ").lowercased()
+                if text.contains("liked") || text.contains("library") || text.contains("любим") {
+                    candidates.append(text)
+                }
+                if addPatterns.contains(where: text.contains) {
+                    addButton = element
+                    return
+                }
+                if likedPatterns.contains(where: text.contains) {
+                    alreadyLiked = true
+                }
+            }
+            var childrenRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
+            for child in childrenRef as? [AXUIElement] ?? [] {
+                search(child, depth: depth + 1)
+            }
+        }
+        for window in windows { search(window, depth: 0) }
+        nnlog("like: scanned \(visited) nodes, candidates=\(candidates)")
+
+        if let button = addButton {
+            let pressErr = AXUIElementPerformAction(button, kAXPressAction as CFString)
+            nnlog("like: pressed Like button err=\(pressErr.rawValue)")
+            if pressErr == .success { return .pressed(nowLiked: true) }
+            return .notFound
+        }
+        if visited < 20 { return .treeCold }  // bare native shell, web tree absent
+        if alreadyLiked {
+            nnlog("like: track already liked — using keystroke to toggle off")
+        }
+        return .notFound
+    }
+
+    private func axText(_ element: AXUIElement, _ attribute: String) -> String? {
+        var ref: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, attribute as CFString, &ref)
+        return ref as? String
     }
 
     private static func postLikeShortcut() {
@@ -229,7 +358,7 @@ final class SpotifyService: ObservableObject {
                 }
             }
             if !loggedMenuDump {
-                NSLog("NotchNest spotify-menu [%@]: %@", menuName, titles.joined(separator: " | "))
+                nnlog("spotify-menu [\(menuName)]: \(titles.joined(separator: " | "))")
             }
         }
         loggedMenuDump = true
