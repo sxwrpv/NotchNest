@@ -48,6 +48,52 @@ class AudioCapture:
     def last_error(self) -> Optional[str]:
         return self._error
 
+    # A live microphone always carries a noise floor (a silent room still
+    # measures ~1e-3). Exact zeros for a whole utterance mean the input is
+    # dead — macOS hands out digital silence when microphone permission is
+    # denied, and a muted or unplugged device does the same. Whisper
+    # hallucinates repeated words on such input, so we must never transcribe it.
+    DEAD_INPUT_PEAK = 1e-5
+    # Only genuinely dead input is blocked here. Measured on this machine: a
+    # silent room reads ~0.013 peak while quiet-but-intelligible speech read
+    # 0.0075, so those ranges overlap and any "is there speech?" threshold
+    # would reject real dictation. A disconnected or permission-denied input
+    # reads 0.0 exactly, which this catches with room to spare; deciding
+    # whether quiet audio contains words is left to Whisper's no_speech_prob.
+    NO_SPEECH_PEAK = 0.001
+
+    @staticmethod
+    def measure(samples) -> tuple:
+        """(peak, rms) of a buffer — logged on every utterance so a failing
+        microphone is visible as numbers instead of guessed at from garbage."""
+        if samples is None or len(samples) == 0:
+            return 0.0, 0.0
+        return float(np.abs(samples).max()), float(np.sqrt(np.mean(samples**2)))
+
+    @classmethod
+    def is_dead_signal(cls, samples) -> bool:
+        """True when the buffer holds no speech: either exact digital silence
+        (permission denied / device gone) or nothing above the noise floor."""
+        if samples is None or len(samples) == 0:
+            return False
+        return float(np.abs(samples).max()) < cls.NO_SPEECH_PEAK
+
+    @classmethod
+    def is_silent_device(cls, samples) -> bool:
+        """Exact zeros — the input is not merely quiet, it is disconnected."""
+        if samples is None or len(samples) == 0:
+            return False
+        return float(np.abs(samples).max()) < cls.DEAD_INPUT_PEAK
+
+    def recover(self) -> None:
+        """Drop the stream so the next ensure_stream() opens a fresh one.
+
+        The stream is opened once at startup and kept open, so a permission
+        granted later — or a device that was swapped — would otherwise keep
+        delivering silence until the app restarts."""
+        log.warning("reopening audio stream after dead input")
+        self.close_stream()
+
     # -- stream lifecycle --------------------------------------------------
     def _callback(self, indata, frames, time_info, status):
         if status:

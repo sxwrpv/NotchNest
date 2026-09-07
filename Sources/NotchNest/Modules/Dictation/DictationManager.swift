@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import AVFoundation
 import Combine
 
 enum DictationState: String {
@@ -46,6 +47,10 @@ final class DictationManager: ObservableObject {
     @Published private(set) var murmurRunning = false
     /// nil until the engine has reported its config through the bridge.
     @Published private(set) var settings: DictationSettings?
+    /// Last problem the engine reported (e.g. a dead microphone); "" when healthy.
+    @Published private(set) var engineError: String = ""
+    /// Microphone permission is denied or restricted for NotchNest.
+    @Published private(set) var micDenied = false
 
     private let stateURL = URL(fileURLWithPath:
         NSString(string: "~/.murmur/notch.json").expandingTildeInPath)
@@ -71,6 +76,7 @@ final class DictationManager: ObservableObject {
     private var pendingCommands: [String] = []
 
     func start() {
+        ensureMicrophoneAccess()
         startEngine()
         poll()
         timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
@@ -82,6 +88,32 @@ final class DictationManager: ObservableObject {
         timer?.invalidate()
         timer = nil
         stopEngine()
+    }
+
+    // MARK: - Microphone permission
+
+    /// The engine runs as our child process, so macOS attributes its
+    /// microphone use to NotchNest. If the app never asks, the engine's input
+    /// stream still opens but delivers digital silence — which is exactly how
+    /// dictation "works" while transcribing nothing but hallucinations.
+    func ensureMicrophoneAccess() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            micDenied = false
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async { self?.micDenied = !granted }
+            }
+        default:
+            micDenied = true
+        }
+    }
+
+    func openMicrophoneSettings() {
+        guard let url = URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+        else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - Engine process lifecycle
@@ -174,6 +206,7 @@ final class DictationManager: ObservableObject {
         murmurRunning = fresh
         state = fresh ? (DictationState(rawValue: rawState) ?? .idle) : .offline
         latestText = text
+        engineError = fresh ? ((obj["error"] as? String) ?? "") : ""
 
         if fresh, let raw = obj["settings"] as? [String: Any] {
             var s = DictationSettings()

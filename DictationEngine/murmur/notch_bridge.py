@@ -219,15 +219,16 @@ class NotchBridge:
         except Exception:
             state = "idle"
         text = getattr(self.controller, "last_final", "") or ""
+        error = getattr(self.controller, "last_error", None) or ""
         settings = self._settings_snapshot()
         now = time.time()
-        snapshot = (state, text, json.dumps(settings, sort_keys=True))
+        snapshot = (state, text, error, json.dumps(settings, sort_keys=True))
         # Write on change, plus a periodic heartbeat so NotchNest can tell the
         # difference between "idle" and "Murmur isn't running".
         if snapshot != self._last_snapshot or (now - self._last_write_ts) >= self.heartbeat:
             self._atomic_write({
                 "state": state, "text": text, "ts": now, "running": True,
-                "settings": settings,
+                "error": error, "settings": settings,
             })
             self._last_snapshot = snapshot
             self._last_write_ts = now

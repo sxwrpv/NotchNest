@@ -50,8 +50,10 @@ struct NotchRootView: View {
     /// modules get a compact popup. Dictation shrinks further with no history.
     private var currentExpandedSize: CGSize {
         var size = notch.selectedTab.panelSize
-        if notch.selectedTab == .dictation && dictation.history.isEmpty {
-            size.height = 165
+        if notch.selectedTab == .dictation {
+            if dictation.history.isEmpty { size.height = 165 }
+            // the microphone/engine warning needs a row of its own
+            if dictation.micDenied || !dictation.engineError.isEmpty { size.height += 64 }
         }
         return size
     }

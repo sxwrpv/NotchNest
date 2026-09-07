@@ -17,7 +17,7 @@ from .llm import LLMRouter, LLMUnavailable
 from .overlay import Overlay
 from .snippets import Snippets
 from .styles import StyleManager
-from .transcriber import MLXWhisperTranscriber
+from .transcriber import MLXWhisperTranscriber, is_degenerate
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +62,8 @@ class Controller:
 
         self.last_raw: str = ""
         self.last_final: str = ""
+        # Surfaced to NotchNest through the notch bridge; None when healthy.
+        self.last_error: Optional[str] = None
 
         # observers (menu bar wires in here)
         self.on_state_change: Optional[Callable[[State], None]] = None
@@ -214,6 +216,32 @@ class Controller:
             self.overlay.hide()
             self._set_state(State.IDLE)
             return
+        # Digital silence is a broken input, not a quiet room. Transcribing it
+        # makes Whisper hallucinate a repeated word, which then gets typed into
+        # whatever app is focused — so refuse, say why, and reopen the stream so
+        # a permission granted afterwards takes effect without a restart.
+        peak, rms = self.audio.measure(samples)
+        log.info("captured %.1fs: peak=%.4f rms=%.4f", dur, peak, rms)
+        if self.audio.is_dead_signal(samples):
+            dead_device = self.audio.is_silent_device(samples)
+            log.error(
+                "no speech in the buffer (peak=%.4f over %.1fs) — %s; "
+                "discarding instead of transcribing", peak, dur,
+                "input is digital silence" if dead_device else "nothing above the noise floor"
+            )
+            self.audio.recover()
+            self.last_error = (
+                "No audio reaching the microphone. Check System Settings › "
+                "Privacy & Security › Microphone › NotchNest, and that the "
+                "right input device is selected."
+                if dead_device else
+                "Heard only silence — check the microphone input level and "
+                "that the right input device is selected."
+            )
+            self.overlay.flash_error("No audio from microphone")
+            self._set_state(State.IDLE)
+            return
+
         self._set_state(State.PROCESSING)
         self.overlay.set_mode("processing", "Transcribing…")
         gen = self._gen
@@ -237,8 +265,23 @@ class Controller:
                 return
             self.last_raw = raw
             if not raw.strip():
+                self.last_error = None
                 self.overlay.flash_error("Heard nothing")
                 return
+
+            # Whisper answers audio it cannot resolve with one word repeated
+            # for the whole window. That is never dictation, and it used to be
+            # cleaned up and typed straight into whatever app had focus.
+            if is_degenerate(raw):
+                log.warning("discarding degenerate transcript: %r", raw[:80])
+                self.last_error = (
+                    "Couldn't make out any speech — nothing was inserted. "
+                    "Check the microphone input level and that the right "
+                    "input device is selected."
+                )
+                self.overlay.flash_error("Couldn't make out any speech")
+                return
+            self.last_error = None  # a real transcript got through
 
             if kind == "command":
                 self._process_command(raw, selection, bundle, pid, gen)

@@ -9,6 +9,9 @@ struct DictationView: View {
             if !manager.murmurRunning {
                 offlineState
             } else {
+                if manager.micDenied || !manager.engineError.isEmpty {
+                    problemBanner
+                }
                 controls
                 if !manager.history.isEmpty {
                     Divider().background(Theme.panelStroke)
@@ -93,6 +96,33 @@ struct DictationView: View {
                 }
             }
         }
+    }
+
+    /// A dead microphone used to fail silently — the engine transcribed digital
+    /// silence into hallucinated words. Now it says so, right where you dictate.
+    private var problemBanner: some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.warn)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(manager.micDenied
+                     ? "Microphone access is off for NotchNest"
+                     : manager.engineError)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Microphone settings") {
+                    manager.openMicrophoneSettings()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.controlBackground))
     }
 
     private var offlineState: some View {

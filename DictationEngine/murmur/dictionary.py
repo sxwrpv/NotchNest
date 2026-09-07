@@ -75,8 +75,11 @@ class PersonalDictionary:
         terms = self.all_terms()
         if not terms:
             return None
-        prompt = "Glossary: " + ", ".join(terms)
-        return prompt[:600]
+        # A bare comma-separated term list is the documented way to bias
+        # Whisper. A leading word ("Glossary:") gives the decoder an English
+        # sentence to echo, and on unclear audio it did exactly that —
+        # emitting "Glossary" hundreds of times instead of the dictation.
+        return ", ".join(terms)[:600]
 
     # -- replacements ------------------------------------------------------
     def replacement_map(self) -> dict[str, str]:
