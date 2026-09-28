@@ -12,7 +12,7 @@ enum DictationState: String {
         case .listening:  return "Listening…"
         case .processing: return "Transcribing…"
         case .command:    return "Command…"
-        case .offline:    return "Murmur not running"
+        case .offline:    return "Engine offline"
         }
     }
 }
@@ -37,9 +37,10 @@ struct DictationSettings: Equatable {
     var notifications = true
 }
 
-/// Owns the bundled dictation engine (DictationEngine/, the merged Murmur
-/// code): spawns it headless as a child process, restarts it if it dies, and
-/// talks to it through two files in ~/.murmur (state mirror + command file).
+/// Owns the dictation engine (the merged Murmur code, shipped inside the app
+/// bundle and provisioned by `EngineInstaller`): spawns it headless as a child
+/// process, restarts it if it dies, and talks to it through two files in
+/// ~/.murmur (state mirror + command file).
 final class DictationManager: ObservableObject {
     @Published private(set) var state: DictationState = .offline
     @Published private(set) var latestText: String = ""
@@ -51,22 +52,13 @@ final class DictationManager: ObservableObject {
     @Published private(set) var engineError: String = ""
     /// Microphone permission is denied or restricted for NotchNest.
     @Published private(set) var micDenied = false
+    /// Why the engine couldn't be launched at all; "" when it could.
+    @Published private(set) var launchError: String = ""
 
     private let stateURL = URL(fileURLWithPath:
         NSString(string: "~/.murmur/notch.json").expandingTildeInPath)
     private let cmdURL = URL(fileURLWithPath:
         NSString(string: "~/.murmur/notch.cmd").expandingTildeInPath)
-
-    /// DictationEngine lives next to NotchNest.app in the repo; fall back to
-    /// the known absolute location when running from somewhere else.
-    private static var engineDir: URL {
-        let nextToApp = Bundle.main.bundleURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("DictationEngine")
-        if FileManager.default.fileExists(atPath: nextToApp.path) { return nextToApp }
-        return URL(fileURLWithPath:
-            NSString(string: "~/claude folder/NotchNest/DictationEngine").expandingTildeInPath)
-    }
 
     private var timer: Timer?
     private var lastFinal: String = ""
@@ -76,7 +68,6 @@ final class DictationManager: ObservableObject {
     private var pendingCommands: [String] = []
 
     func start() {
-        ensureMicrophoneAccess()
         startEngine()
         poll()
         timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
@@ -124,31 +115,42 @@ final class DictationManager: ObservableObject {
     /// engine keeps heartbeating but captures only silence.
     func startEngine() {
         if engine?.isRunning == true { return }
-        reclaimOrphanIfNeeded()
-
-        let dir = Self.engineDir
-        let python = dir.appendingPathComponent(".venv/bin/python")
-        guard FileManager.default.fileExists(atPath: python.path) else {
-            NSLog("NotchNest: dictation engine not found at \(dir.path)")
+        // Not provisioned yet — EngineInstaller calls back here when it is.
+        guard EngineRuntime.isInstalled else { return }
+        do {
+            try EngineRuntime.validate()
+        } catch {
+            launchError = error.localizedDescription
+            NSLog("NotchNest: refusing to start dictation engine: \(error.localizedDescription)")
             return
         }
+        launchError = ""
+        ensureMicrophoneAccess()
+        reclaimOrphanIfNeeded()
 
         let proc = Process()
-        proc.executableURL = python
+        proc.executableURL = EngineRuntime.python
+        // Relative main.py (cwd = the bundled source) keeps the command line in
+        // the shape the orphan reclaim and the engine's single-instance guard match.
         proc.arguments = ["-u", "main.py", "--headless"]
-        proc.currentDirectoryURL = dir
+        proc.currentDirectoryURL = EngineRuntime.bundledEngine
+        proc.environment = EngineRuntime.pythonEnvironment
         proc.standardOutput = FileHandle.nullDevice   // engine keeps its own log
         proc.standardError = FileHandle.nullDevice
         proc.terminationHandler = { [weak self] p in
             DispatchQueue.main.async {
-                guard let self else { return }
+                // A replaced engine's exit isn't news — only react to the current one.
+                guard let self, self.engine === p else { return }
                 self.engine = nil
                 guard !self.stoppingEngine else { return }
                 NSLog("NotchNest: dictation engine exited (\(p.terminationStatus)) — restarting in 5s")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.startEngine() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    if !self.stoppingEngine { self.startEngine() }
+                }
             }
         }
         do {
+            stoppingEngine = false
             try proc.run()
             engine = proc
             NSLog("NotchNest: dictation engine started (pid \(proc.processIdentifier))")
@@ -161,6 +163,17 @@ final class DictationManager: ObservableObject {
         stoppingEngine = true
         engine?.terminate()
         engine = nil
+    }
+
+    /// Stops the engine and starts a fresh one once the old process is gone
+    /// (e.g. after Accessibility is granted, so its hotkey monitor is trusted).
+    func restartEngine() {
+        let old = engine
+        stopEngine()
+        DispatchQueue.global(qos: .userInitiated).async {
+            old?.waitUntilExit()
+            DispatchQueue.main.async { self.startEngine() }
+        }
     }
 
     /// Terminates any engine process we didn't spawn ourselves so the fresh

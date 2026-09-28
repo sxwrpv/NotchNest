@@ -1,0 +1,33 @@
+NotchNest — install in three steps
+==================================
+
+Needs: an Apple Silicon Mac (M1 or newer), macOS 14 Sonoma or later,
+about 4 GB of free disk space, and internet for the first launch.
+
+1. Drag NotchNest onto the Applications folder in this window.
+
+2. Open it. NotchNest isn't notarized by Apple, so the first open is blocked:
+     • macOS 15 Sequoia / 26 Tahoe: click "Done", then open
+       System Settings → Privacy & Security, scroll down to
+       "NotchNest was blocked…" and click "Open Anyway".
+     • macOS 14 Sonoma: right-click NotchNest → Open → Open.
+   (Or in Terminal:  xattr -dr com.apple.quarantine /Applications/NotchNest.app )
+   Next time, skip this step entirely with the one-line install in Terminal:
+     curl -fsSL https://github.com/sxwrpv/NotchNest/releases/latest/download/install.sh | bash
+
+3. The setup assistant does the rest on its own:
+     • installs a private Python and the dictation engine (~300 MB)
+     • picks the right speech and AI models for your Mac's memory and
+       downloads them (~2.5 GB) — after that everything runs offline
+     • walks you through Microphone, Accessibility and Calendar access
+     • turns on "Open at login"
+
+Dictate: hold RIGHT OPTION (⌥) and talk, or double-tap it to toggle.
+The text is copied to your clipboard and shown in the notch.
+Hover the notch to open it; the menu-bar icon has Settings.
+
+Uninstall: quit NotchNest, delete it from Applications, then remove
+  ~/Library/Application Support/NotchNest
+  ~/Library/Caches/NotchNest
+  ~/.murmur
+  ~/.cache/huggingface/hub/models--mlx-community--*   (the downloaded models)

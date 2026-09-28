@@ -5,6 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject var clipboard: ClipboardManager
     @EnvironmentObject var spotify: SpotifyService
     @EnvironmentObject var dictation: DictationManager
+    @EnvironmentObject var installer: EngineInstaller
 
     private static let hotkeyOptions = [
         "fn", "right_option", "left_option", "right_command", "left_command",
@@ -67,7 +68,19 @@ struct SettingsView: View {
                 }
 
                 section("Dictation", "Engine settings — applied live") {
-                    if let engine = dictation.settings {
+                    if !installer.isReady {
+                        HStack(spacing: 8) {
+                            Circle().fill(installer.isRunning ? .orange : .gray)
+                                .frame(width: 8, height: 8)
+                            Text(installer.isRunning ? "Setting up the engine…" : "Engine not installed")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(installer.isRunning ? "Show Progress" : "Set Up…") {
+                                NotificationCenter.default.post(name: .openSetup, object: nil)
+                            }
+                        }
+                    } else if let engine = dictation.settings {
                         dictationPickers(engine)
                     } else {
                         HStack(spacing: 8) {
@@ -154,7 +167,7 @@ struct SettingsView: View {
         enginePicker("Dictation key", engine.dictationKey,
                      options: Self.hotkeyOptions, key: "hotkeys.dictation_key")
         enginePicker("Command key", engine.commandKey,
-                     options: Self.hotkeyOptions, key: "hotkeys.command_key")
+                     options: ["none"] + Self.hotkeyOptions, key: "hotkeys.command_key")
         enginePicker("Whisper model", engine.model,
                      options: Self.modelOptions, key: "asr.model")
         enginePicker("Language", engine.language,
@@ -166,9 +179,18 @@ struct SettingsView: View {
         engineToggle("Live partial transcript", engine.partials, key: "asr.partials")
         engineToggle("AI cleanup", engine.cleanupEnabled, key: "llm.cleanup_enabled")
         engineToggle("Notifications", engine.notifications, key: "ui.show_notifications")
-        Text("Double-tap the dictation key to toggle, hold it for push-to-talk. Model changes re-download weights on first use.")
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
+        HStack(alignment: .top) {
+            Text("Double-tap the dictation key to toggle, hold it for push-to-talk. Model changes re-download weights on first use.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Repair Engine") {
+                installer.repair()
+                NotificationCenter.default.post(name: .openSetup, object: nil)
+            }
+            .controlSize(.small)
+            .help("Re-checks Python, packages and models, fixing anything missing")
+        }
     }
 
     private func enginePicker(_ title: String, _ current: String,

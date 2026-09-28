@@ -4,6 +4,7 @@ import AppKit
 extension Notification.Name {
     static let notchToggle = Notification.Name("com.notchnest.notchToggle")
     static let openSettings = Notification.Name("com.notchnest.openSettings")
+    static let openSetup = Notification.Name("com.notchnest.openSetup")
 }
 
 extension Date {
