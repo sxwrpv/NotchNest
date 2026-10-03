@@ -7,6 +7,7 @@ final class AppEnvironment: ObservableObject {
     let nowPlaying: NowPlayingManager
     let spotify: SpotifyService
     let dictation: DictationManager
+    let engineInstaller: EngineInstaller
     let fileTray: FileTrayManager
     let clipboard: ClipboardManager
     let pomodoro: PomodoroManager
@@ -23,6 +24,7 @@ final class AppEnvironment: ObservableObject {
         self.nowPlaying = NowPlayingManager()
         self.spotify = SpotifyService(settings: settings)
         self.dictation = DictationManager()
+        self.engineInstaller = EngineInstaller()
         self.fileTray = FileTrayManager()
         self.clipboard = ClipboardManager(limit: settings.clipboardLimit)
         self.pomodoro = PomodoroManager(settings: settings)
@@ -33,7 +35,12 @@ final class AppEnvironment: ObservableObject {
 
     func startServices() {
         nowPlaying.start()
+        // Restart rather than start, so a repaired environment is picked up too.
+        engineInstaller.onReady = { [weak dictation] in dictation?.restartEngine() }
         dictation.start()
+        // First launch on a new Mac: provision Python, packages and models
+        // right away — the setup assistant shows the progress.
+        if settings.isEnabled(.dictation), !engineInstaller.isReady { engineInstaller.install() }
         clipboard.start()
         calendar.start()
     }
@@ -46,6 +53,7 @@ final class AppEnvironment: ObservableObject {
             .environmentObject(nowPlaying)
             .environmentObject(spotify)
             .environmentObject(dictation)
+            .environmentObject(engineInstaller)
             .environmentObject(fileTray)
             .environmentObject(clipboard)
             .environmentObject(pomodoro)

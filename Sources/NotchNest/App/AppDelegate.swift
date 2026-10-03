@@ -7,11 +7,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchController!
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
+    private var setupWindow: NSWindow?
     private var cancellables = Set<AnyCancellable>()
 
+    private static let setupCompletedKey = "setupCompleted"
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Relaunching from /Applications — this copy only has to get out of the way.
+        if AppMover.offerMoveIfNeeded() { return }
+
         env = AppEnvironment()
         notchController = NotchController(env: env)
+        let firstRun = !UserDefaults.standard.bool(forKey: Self.setupCompletedKey)
+        if firstRun { applyFirstRunDefaults() }
         env.startServices()
         setupStatusItem()
 
@@ -19,11 +27,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.openSettings() }
             .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .openSetup)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.openSetup() }
+            .store(in: &cancellables)
+
+        let wantsDictation = env.settings.isEnabled(.dictation)
+        if firstRun || (wantsDictation && !env.engineInstaller.isReady) {
+            openSetup()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         // One app: quitting NotchNest also stops the dictation engine child.
-        env.dictation.stop()
+        env?.dictation.stop()
+    }
+
+    /// New Mac, installed copy: open at login unless the user already chose.
+    private func applyFirstRunDefaults() {
+        if AppMover.isInApplications,
+           UserDefaults.standard.object(forKey: "launchAtLogin") == nil {
+            env.settings.launchAtLogin = true
+        }
     }
 
     // MARK: - Status bar
@@ -39,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Toggle Notch", action: #selector(toggleNotch), keyEquivalent: "n")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        menu.addItem(withTitle: "Setup Assistant…", action: #selector(openSetup), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit NotchNest", action: #selector(quit), keyEquivalent: "q")
         for item in menu.items { item.target = self }
@@ -75,10 +101,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// MARK: - Setup assistant window
+
+extension AppDelegate {
+    @objc func openSetup() {
+        if let window = setupWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let view = env.inject(SetupView(onDone: { [weak self] in
+            UserDefaults.standard.set(true, forKey: Self.setupCompletedKey)
+            self?.setupWindow?.close()
+        }))
+        let hosting = NSHostingController(rootView: AnyView(view))
+        hosting.sizingOptions = [.preferredContentSize]
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Welcome to NotchNest"
+        window.styleMask = [.titled, .closable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.delegate = self
+        setupWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        if (notification.object as? NSWindow) == settingsWindow {
+        let window = notification.object as? NSWindow
+        if window == settingsWindow {
             settingsWindow = nil
+        }
+        if window == setupWindow {
+            setupWindow = nil
+            // Closing it after a finished install counts as done; otherwise it
+            // comes back next launch until dictation is ready.
+            if env.engineInstaller.isReady {
+                UserDefaults.standard.set(true, forKey: Self.setupCompletedKey)
+            }
         }
     }
 }

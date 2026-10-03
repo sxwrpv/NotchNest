@@ -13,10 +13,13 @@ hotkeys:
   # Double-tap = toggle recording on/off. Press-and-hold = push-to-talk.
   # Keys: fn, right_option, left_option, right_command, left_command,
   #       right_control, left_control, right_shift, left_shift
-  dictation_key: fn
+  # right_option by default: macOS already claims fn/🌐 (emoji picker, and
+  # "press twice" starts Apple's own dictation), which fights a double-tap.
+  dictation_key: right_option
   # Hold this while text is selected, speak an instruction ("make this formal"),
-  # release — the selection is replaced with the rewrite.
-  command_key: right_option
+  # release — the selection is replaced with the rewrite. none = off; pick a
+  # key other than the dictation key to turn Command Mode on.
+  command_key: none
   double_tap_window_ms: 400
   hold_threshold_ms: 350
 
@@ -64,8 +67,9 @@ insertion:
 
 dictionary:
   # Terms fed to the ASR as biasing context AND protected in the final text.
-  entries:
-    - Murmur
+  # Keep it a plain list of names — Whisper echoes the prompt on unclear audio.
+  entries: []
+  #  - NotchNest
   # Post-transcription find/replace safety net (case-insensitive, whole words).
   replacements: {}
   #  "poly copy": "PolyCopy"
@@ -88,7 +92,8 @@ styles:
   #  com.tinyspeck.slackmacgap: casual
 
 overlay:
-  enabled: true
+  # NotchNest's notch is the dictation UI; the engine's own pill stays off.
+  enabled: false
   width: 400
   # Keep the status pill on screen at all times (small dim dot when idle,
   # full pill when listening/processing), not just during dictation.

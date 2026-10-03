@@ -13,3 +13,6 @@ DictationEngine/packaging/
 # OS noise
 .DS_Store
 *.log
+
+# Shareable builds (./package.sh)
+dist/

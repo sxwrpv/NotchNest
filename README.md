@@ -1,4 +1,12 @@
-# NotchNest (local build)
+# NotchNest
+
+**Install** (Apple Silicon, macOS 14+) — paste into Terminal:
+
+```bash
+curl -fsSL https://github.com/sxwrpv/NotchNest/releases/latest/download/install.sh | bash
+```
+
+Or grab the disk image from [Releases](https://github.com/sxwrpv/NotchNest/releases/latest).
 
 A personal, fully-editable macOS notch utility — a clean-room reimplementation of the
 NotchNest feature set. Native **Swift + SwiftUI + AppKit**, no external dependencies,
@@ -60,15 +68,46 @@ Two paths, chosen automatically:
 ```bash
 ./build.sh          # builds NotchNest.app
 ./build.sh --run    # builds and launches it
+./package.sh        # builds dist/NotchNest-<version>.dmg, .zip and install.sh
+./release.sh        # tags v<version> and publishes those as a GitHub release
 ```
 
-`build.sh` runs `swift build -c release`, assembles `NotchNest.app`, and ad-hoc signs it.
-To install permanently, drag `NotchNest.app` into `/Applications` (recommended before
-enabling "Launch at login").
+`build.sh` runs `swift build -c release`, assembles a self-contained `NotchNest.app`
+(the dictation engine's source, its hash-locked `requirements.lock` and the `uv`
+installer ride inside the bundle) and signs it inside-out. Building needs Command
+Line Tools and [`uv`](https://docs.astral.sh/uv/) (`brew install uv`; `UV_BIN`
+overrides which binary is bundled).
 
-## Permissions (macOS will prompt on first use)
+## Sharing it / installing on a new Mac
 
-- **Automation** → to read/control Music & Spotify (Now Playing).
+Easiest: send the one-line installer above. `curl` downloads aren't quarantined,
+so macOS opens the app with no Gatekeeper prompt; `install.sh` pins the release
+zip's SHA-256. Alternatively `./package.sh` produces `dist/NotchNest-<version>.dmg`
+(~25 MB) with the app, an Applications shortcut and a *READ ME FIRST*. Either way,
+on first launch the app sets itself up — no Python or Homebrew needed:
+
+1. **Moves itself to Applications** if opened from Downloads or the disk image
+   (and relaunches), so open-at-login and permissions stick.
+2. **Setup assistant** opens and installs the dictation engine on its own:
+   a private Python 3.12 (via the bundled `uv`), the 59 hash-verified packages
+   from `requirements.lock`, then the models — with live download progress.
+3. **Auto-configures for that Mac** (`setup_engine.py configure`, fresh configs
+   only): Whisper large-v3-turbo-q4, plus the Qwen2.5 **3B** cleanup LLM on
+   ≥12 GB of RAM or **1.5B** on 8 GB machines; right ⌥ as the dictation key.
+4. Walks through **Microphone / Accessibility / Calendar** with live status
+   (restarting the engine once Accessibility is granted), and turns on
+   **open at login** for installed copies.
+
+Requirements: Apple Silicon, macOS 14+, ~4 GB free, internet on first launch.
+The build isn't notarized (no paid Apple Developer ID), so a DMG downloaded in a
+browser needs System Settings → Privacy & Security → **Open Anyway** on first open
+(macOS 15+) or right-click → Open (macOS 14) — the one-line installer avoids this. Builds signed with the same "NotchNest Dev"
+certificate keep users' permission grants across updates.
+
+## Permissions (the setup assistant asks for these)
+
+- **Microphone** + **Accessibility** → dictation (hotkeys, text insertion) and the Spotify Like button.
+- **Automation** → to read/control Music & Spotify (Now Playing), asked on first use.
 - **Calendar** → to show today's events.
 - **Notifications** → for Pomodoro alerts.
 
@@ -77,14 +116,31 @@ If you deny one by mistake: System Settings → Privacy & Security → the relev
 ## Dictation engine
 
 NotchNest is **one app**: the former standalone Murmur dictation app is merged
-in as `DictationEngine/` (Python + MLX Whisper, with its own 1.2 GB `.venv`
-that stays outside the `.app` bundle). NotchNest owns the engine's lifecycle:
+in as `DictationEngine/` (Python + MLX Whisper). Its source ships **inside the
+signed bundle** (`Contents/Resources/DictationEngine`); `EngineInstaller`
+provisions the runtime on first launch:
 
-- On launch, `DictationManager` spawns `DictationEngine/.venv/bin/python -u
-  main.py --headless` as a child process (no menu-bar icon, no dock, no pill
+```
+~/Library/Application Support/NotchNest/python/                 uv-managed Python 3.12
+~/Library/Application Support/NotchNest/DictationEngine/.venv/  packages from requirements.lock
+~/Library/Application Support/NotchNest/DictationEngine/install.json   marker (lockfile SHA-256)
+~/Library/Caches/NotchNest/{uv,pycache}/                         download + bytecode caches
+~/.cache/huggingface/hub/                                        Whisper + LLM weights
+~/Library/Logs/NotchNest-setup.log                               installer log
+```
+
+A new `requirements.lock` in an app update triggers a quick re-sync; Settings →
+Dictation → **Repair Engine** re-runs every step. Before each launch the venv
+is checked: it must resolve into NotchNest's own Python install, and every
+directory on the way must be owned by the user and not group/world-writable.
+
+- `DictationManager` spawns `<venv>/bin/python -u main.py --headless` (cwd = the
+  bundled source) as a child process (no menu-bar icon, no dock, no pill
   overlay — the notch is the only UI), auto-restarts it if it dies, and
   terminates it on quit. The engine keeps a single-instance guard as a backstop.
 - User state stays in `~/.murmur/` (config.yaml, history db, log).
+- The repo's own `DictationEngine/.venv` is only for development (tests,
+  regenerating the lockfile — see the header of `requirements.lock`).
 
 They talk through two files in `~/.murmur`:
 
@@ -119,6 +175,8 @@ Sources/NotchNest/
     NotchRootView.swift      SwiftUI surface: shape, hover, header, tabs
   Modules/<Feature>/         One Manager (ObservableObject) + one View each
   Settings/                  SettingsStore (UserDefaults) + SettingsView
+  Setup/                     EngineInstaller (first-run provisioning), SetupView
+                             (setup assistant + permissions), AppMover
   Support/                   Theme, shared views, extensions
 ```
 

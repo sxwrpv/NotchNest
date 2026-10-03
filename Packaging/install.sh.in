@@ -1,0 +1,63 @@
+#!/bin/bash
+# NotchNest @VERSION@ installer.
+#
+#   curl -fsSL https://github.com/sxwrpv/NotchNest/releases/latest/download/install.sh | bash
+#
+# Files downloaded with curl aren't quarantined, so macOS opens NotchNest
+# straight away — no "can't be opened" prompt, which browser downloads of
+# un-notarized apps get. The download is checked against its SHA-256 first.
+#
+# Options (environment variables):
+#   NOTCHNEST_DIR=/path     install somewhere other than /Applications
+#   NOTCHNEST_NO_LAUNCH=1   install without opening the app
+set -euo pipefail
+
+VERSION="@VERSION@"
+SHA256="@SHA256@"
+URL="https://github.com/sxwrpv/NotchNest/releases/download/v$VERSION/NotchNest-$VERSION.zip"
+
+say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
+die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+
+[[ "$(uname -s)" == Darwin ]] || die "NotchNest is a macOS app."
+# hw.optional.arm64 is 1 on Apple Silicon even inside a Rosetta shell.
+[[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" == 1 ]] \
+    || die "NotchNest needs an Apple Silicon Mac (M1 or newer)."
+MACOS=$(sw_vers -productVersion)
+(( ${MACOS%%.*} >= 14 )) || die "NotchNest needs macOS 14 Sonoma or later (this Mac has $MACOS)."
+
+if [[ -n "${NOTCHNEST_DIR:-}" ]]; then
+    DEST="$NOTCHNEST_DIR"
+elif [[ -w /Applications ]]; then
+    DEST="/Applications"
+else
+    DEST="$HOME/Applications"
+fi
+mkdir -p "$DEST"
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+say "Downloading NotchNest $VERSION…"
+curl -fL --progress-bar "$URL" -o "$TMP/NotchNest.zip"
+echo "$SHA256  $TMP/NotchNest.zip" | shasum -a 256 -c --status \
+    || die "The download didn't match its checksum — run the command again."
+
+if pgrep -x NotchNest >/dev/null; then
+    say "Quitting the running NotchNest…"
+    osascript -e 'tell application id "com.notchnest.local" to quit' >/dev/null 2>&1 || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x NotchNest >/dev/null || break; sleep 0.5; done
+fi
+
+say "Installing to $DEST…"
+rm -rf "$DEST/NotchNest.app"
+ditto -x -k "$TMP/NotchNest.zip" "$DEST"
+xattr -dr com.apple.quarantine "$DEST/NotchNest.app" 2>/dev/null || true
+codesign --verify --strict "$DEST/NotchNest.app" || die "The installed app failed its signature check."
+
+if [[ "${NOTCHNEST_NO_LAUNCH:-}" == 1 ]]; then
+    say "Installed $DEST/NotchNest.app"
+    exit 0
+fi
+say "Opening NotchNest — its setup assistant installs dictation (about 3 GB, one time)."
+open "$DEST/NotchNest.app"

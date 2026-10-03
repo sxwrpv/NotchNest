@@ -2,11 +2,14 @@ import SwiftUI
 
 struct DictationView: View {
     @EnvironmentObject var manager: DictationManager
+    @EnvironmentObject var installer: EngineInstaller
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            if !manager.murmurRunning {
+            if !installer.isReady {
+                setupState
+            } else if !manager.murmurRunning {
                 offlineState
             } else {
                 if manager.micDenied || !manager.engineError.isEmpty {
@@ -133,9 +136,12 @@ struct DictationView: View {
             Text("Dictation engine isn't running")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.secondaryText)
-            Text("Start it to dictate from the notch.")
+            Text(manager.launchError.isEmpty ? "Start it to dictate from the notch."
+                                             : manager.launchError)
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.tertiaryText)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
             Button("Start engine") { manager.startEngine() }
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .semibold))
@@ -143,6 +149,53 @@ struct DictationView: View {
                 .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Before the engine is provisioned: what the installer is doing, right
+    /// where dictation will appear.
+    private var setupState: some View {
+        VStack(spacing: 7) {
+            Image(systemName: installer.isRunning ? "arrow.down.circle" : "mic.badge.plus")
+                .font(.system(size: 24))
+                .foregroundStyle(Theme.tertiaryText)
+            Text(setupTitle)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.secondaryText)
+            if installer.isRunning, let fraction = installer.fraction {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Theme.controlBackground)
+                        Capsule().fill(Theme.accent)
+                            .frame(width: max(4, geo.size.width * fraction))
+                    }
+                }
+                .frame(width: 220, height: 4)
+            }
+            if !installer.detail.isEmpty {
+                Text(installer.detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.tertiaryText)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Button(installer.phase == .idle ? "Set up dictation" : "Show setup") {
+                if installer.phase == .idle { installer.install() }
+                NotificationCenter.default.post(name: .openSetup, object: nil)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Theme.accent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var setupTitle: String {
+        switch installer.phase {
+        case .running(let step): return "Setting up dictation · \(step.title)"
+        case .failed:            return "Dictation setup needs attention"
+        default:                 return "Dictation isn't set up yet"
+        }
     }
 
     private var isActive: Bool {
