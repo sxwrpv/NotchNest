@@ -59,10 +59,10 @@ struct DictationView: View {
                 Text(isActive ? manager.state.label : "Tap to dictate")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.primaryText)
-                Text(manager.latestText.isEmpty ? "Transcriptions appear here and copy to your clipboard."
-                                                 : manager.latestText)
+                let latest = manager.history.first?.text ?? ""
+                Text(latest.isEmpty ? "Transcriptions appear here and copy to your clipboard." : latest)
                     .font(.system(size: 11))
-                    .foregroundStyle(manager.latestText.isEmpty ? Theme.tertiaryText : Theme.secondaryText)
+                    .foregroundStyle(latest.isEmpty ? Theme.tertiaryText : Theme.secondaryText)
                     .lineLimit(2)
             }
             Spacer(minLength: 0)

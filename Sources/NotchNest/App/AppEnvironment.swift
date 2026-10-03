@@ -26,7 +26,7 @@ final class AppEnvironment: ObservableObject {
         self.dictation = DictationManager()
         self.engineInstaller = EngineInstaller()
         self.fileTray = FileTrayManager()
-        self.clipboard = ClipboardManager(limit: settings.clipboardLimit)
+        self.clipboard = ClipboardManager(settings: settings)
         self.pomodoro = PomodoroManager(settings: settings)
         self.notes = NotesManager()
         self.calendar = CalendarManager()

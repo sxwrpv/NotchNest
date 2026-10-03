@@ -152,7 +152,8 @@ class PersonalDictionary:
                             (w, time.time()),
                         )
         if learned:
-            log.info("auto-learned replacements: %s", learned)
+            log.info("auto-learned %d replacement(s)", len(learned))
+            log.debug("auto-learned replacements: %s", learned)
         return learned
 
     @staticmethod

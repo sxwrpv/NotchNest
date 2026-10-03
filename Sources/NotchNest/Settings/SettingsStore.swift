@@ -52,6 +52,13 @@ final class SettingsStore: ObservableObject {
     @Published var clipboardLimit: Int {
         didSet { defaults.set(clipboardLimit, forKey: Keys.clipboardLimit) }
     }
+    /// Unpinned clipboard items older than this are forgotten; 0 keeps them.
+    @Published var clipboardRetentionDays: Int {
+        didSet { defaults.set(clipboardRetentionDays, forKey: Keys.clipboardRetentionDays) }
+    }
+    @Published var clipboardPaused: Bool {
+        didSet { defaults.set(clipboardPaused, forKey: Keys.clipboardPaused) }
+    }
     @Published var workMinutes: Int {
         didSet { defaults.set(workMinutes, forKey: Keys.workMinutes) }
     }
@@ -98,6 +105,8 @@ final class SettingsStore: ObservableObject {
         static let modules = "enabledModules"
         static let launchAtLogin = "launchAtLogin"
         static let clipboardLimit = "clipboardLimit"
+        static let clipboardRetentionDays = "clipboardRetentionDays"
+        static let clipboardPaused = "clipboardPaused"
         static let workMinutes = "workMinutes"
         static let shortBreakMinutes = "shortBreakMinutes"
         static let longBreakMinutes = "longBreakMinutes"
@@ -112,16 +121,19 @@ final class SettingsStore: ObservableObject {
     }
 
     init() {
-        // Modules — default to all enabled.
+        // Modules — all on by default except Clipboard: a history of everything
+        // copied (passwords included, in apps that don't mark them) is opt-in.
         if let raw = defaults.array(forKey: Keys.modules) as? [String] {
             let decoded = raw.compactMap { ModuleID(rawValue: $0) }
             enabledModules = Set(decoded)
         } else {
-            enabledModules = Set(ModuleID.allCases)
+            enabledModules = Set(ModuleID.allCases).subtracting([.clipboard])
         }
 
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
         clipboardLimit = defaults.object(forKey: Keys.clipboardLimit) as? Int ?? 50
+        clipboardRetentionDays = defaults.object(forKey: Keys.clipboardRetentionDays) as? Int ?? 7
+        clipboardPaused = defaults.bool(forKey: Keys.clipboardPaused)
         workMinutes = defaults.object(forKey: Keys.workMinutes) as? Int ?? 25
         shortBreakMinutes = defaults.object(forKey: Keys.shortBreakMinutes) as? Int ?? 5
         longBreakMinutes = defaults.object(forKey: Keys.longBreakMinutes) as? Int ?? 15

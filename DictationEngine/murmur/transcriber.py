@@ -54,6 +54,7 @@ class MLXWhisperTranscriber(Transcriber):
 
     def __init__(self, model: str = "large-v3-turbo-q4"):
         self.model_repo = resolve_model(model)
+        self._model_path: Optional[str] = None
         self._lock = threading.Lock()
         self._decoder = _Decoder()
         self._loaded = False
@@ -73,10 +74,14 @@ class MLXWhisperTranscriber(Transcriber):
         if initial_prompt:
             kwargs["initial_prompt"] = initial_prompt
         with self._lock:
+            if self._model_path is None:
+                from .models import local_model_path
+
+                self._model_path = local_model_path(self.model_repo)
             result = self._decoder.run(
                 lambda: mlx_whisper.transcribe(
                     audio.astype(np.float32),
-                    path_or_hf_repo=self.model_repo,
+                    path_or_hf_repo=self._model_path,
                     condition_on_previous_text=False,
                     verbose=None,
                     **kwargs,

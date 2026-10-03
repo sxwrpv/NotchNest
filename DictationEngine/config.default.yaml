@@ -111,4 +111,5 @@ ui:
   show_notifications: true
 
 logging:
+  # DEBUG also writes the dictated words themselves into murmur.log.
   level: INFO

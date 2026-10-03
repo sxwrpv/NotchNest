@@ -6,6 +6,7 @@ dictation. It talks to NotchNest through two files in ~/.murmur — no sockets,
 no config, so both sides stay trivial:
 
     notch.json  (Murmur  -> NotchNest)  {"state","text","ts","running","settings"}
+                                        ("text" is cleared TEXT_TTL s after it appears)
     notch.cmd   (NotchNest -> Murmur)   one word: toggle|start|stop|cancel
                                         or: set <dotted.key> <json-value>
 
@@ -46,6 +47,12 @@ SETTINGS_KEYS = [
 ]
 
 
+# How long a finished transcript stays in notch.json. NotchNest reads the file
+# several times a second and keeps its own in-memory history, so the words
+# needn't sit on disk after that.
+TEXT_TTL = 30.0
+
+
 class NotchBridge:
     def __init__(self, controller, poll_interval: float = 0.25, heartbeat: float = 1.0):
         self.controller = controller
@@ -55,6 +62,8 @@ class NotchBridge:
         self._stop = threading.Event()
         self._last_snapshot = None
         self._last_write_ts = 0.0
+        self._text = ""
+        self._text_since = 0.0
 
     def start(self):
         self._thread = threading.Thread(target=self._run, name="notch-bridge", daemon=True)
@@ -218,10 +227,10 @@ class NotchBridge:
             state = getattr(self.controller.state, "value", str(self.controller.state))
         except Exception:
             state = "idle"
-        text = getattr(self.controller, "last_final", "") or ""
+        now = time.time()
+        text = self._shared_text(getattr(self.controller, "last_final", "") or "", now)
         error = getattr(self.controller, "last_error", None) or ""
         settings = self._settings_snapshot()
-        now = time.time()
         snapshot = (state, text, error, json.dumps(settings, sort_keys=True))
         # Write on change, plus a periodic heartbeat so NotchNest can tell the
         # difference between "idle" and "Murmur isn't running".
@@ -232,6 +241,12 @@ class NotchBridge:
             })
             self._last_snapshot = snapshot
             self._last_write_ts = now
+
+    def _shared_text(self, text: str, now: float) -> str:
+        """The latest transcript for TEXT_TTL seconds after it appears, then ""."""
+        if text != self._text:
+            self._text, self._text_since = text, now
+        return text if now - self._text_since < TEXT_TTL else ""
 
     def _settings_snapshot(self) -> dict:
         try:

@@ -10,6 +10,17 @@ It downloads the app, checks its SHA-256, installs it into Applications and open
 
 **Prefer a disk image?** Download `NotchNest-*.dmg` below. Macs block un-notarized apps that were downloaded in a browser, so the first open needs **System Settings → Privacy & Security → Open Anyway** (see *READ ME FIRST* inside the image).
 
+## What's new in 1.2
+
+A privacy and security release. Everything still runs on your Mac; now less of what you say and copy stays behind.
+
+- **Clipboard history is opt-in.** On a new install it starts off (turn it on in Settings → Modules); if you already use it, it stays on. It only records while the module is on, never records passwords or anything apps mark as private, and skips copies made while a password manager is in front. Pause it from the panel; unpinned items are forgotten after 7 days by default (Settings → Clipboard), and **Delete All Clipboard History** clears everything. Pinned items never expire.
+- **Your words stay out of the logs.** The dictation log now records how long each transcript was, not what you said. `~/.murmur` is readable only by you, and the latest transcript is cleared from it 30 seconds after it's handed to the notch.
+- **Spotify sign-in tokens are kept in the Keychain** (moved there automatically), and the sign-in only listens on your own Mac.
+- **The AI cleanup server must be on this Mac**: an Ollama address has to be localhost, and requests can't be redirected elsewhere.
+- **Pinned models.** The speech and cleanup models load at the exact versions they were tested with.
+- **Hardened runtime**: no other program can inject code into NotchNest while it holds your microphone and Accessibility permissions.
+
 ## What's new in 1.1.1
 
 The **File Tray** works now. In 1.1.0, files dropped on the notch never landed.

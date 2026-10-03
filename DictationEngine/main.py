@@ -18,6 +18,10 @@ import os
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
+# Everything the engine writes (log, rotated logs, dictionary database, config)
+# is readable by this user only.
+os.umask(0o077)
+
 import logging
 import sys
 

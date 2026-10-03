@@ -43,7 +43,8 @@ struct DictationSettings: Equatable {
 /// ~/.murmur (state mirror + command file).
 final class DictationManager: ObservableObject {
     @Published private(set) var state: DictationState = .offline
-    @Published private(set) var latestText: String = ""
+    /// This session's transcripts, newest first. Memory only: the engine
+    /// clears the text from notch.json shortly after handing it over.
     @Published private(set) var history: [DictationEntry] = []
     @Published private(set) var murmurRunning = false
     /// nil until the engine has reported its config through the bridge.
@@ -218,7 +219,6 @@ final class DictationManager: ObservableObject {
 
         murmurRunning = fresh
         state = fresh ? (DictationState(rawValue: rawState) ?? .idle) : .offline
-        latestText = text
         engineError = fresh ? ((obj["error"] as? String) ?? "") : ""
 
         if fresh, let raw = obj["settings"] as? [String: Any] {
