@@ -22,7 +22,7 @@ builds with Swift Package Manager (no Xcode required).
 | **Now Playing** | Controls Apple Music & Spotify (play/pause/next/prev, title, artist, artwork). Only scripts players that are already running — never launches them. For Spotify there's a **Like button** that saves/removes the current track from Liked Songs (see "Spotify Like button" below). |
 | **Dictation**   | Built-in push-to-talk dictation (the merged Murmur engine in `DictationEngine/`): live state, mic button, latest transcript, history (click to copy). New transcripts are copied to the clipboard. Settings live in NotchNest → Settings → Dictation. See "Dictation engine" below. |
 | **File Tray**   | Drag files onto the notch to stash them, drag them back out to any app (a copy — the original stays put), double-click to open, right-click to Reveal in Finder / Share (AirDrop) / Remove. Holds references to your files, persisted across launches via bookmarks; files *promised* by Photos or Mail are saved to `~/Library/Application Support/NotchNest/File Tray` and deleted when removed from the tray. |
-| **Clipboard**   | Searchable, pinnable text history. Click any entry to re-copy. Pinned items never expire. |
+| **Clipboard**   | Searchable, pinnable text history; click any entry to re-copy. **Off by default** — turn it on in Settings → Modules. Never records passwords or anything apps mark as private, nor copies made while a password manager is in front. Pause it from the panel; unpinned items are forgotten after 7 days by default (Settings → Clipboard), pinned ones never expire. |
 | **Timer**       | Pomodoro: focus → short break, long break every 4th session. Ring progress + a system notification on each transition. |
 | **Note**        | A persistent quick-note scratchpad (auto-saves). |
 | **Calendar**    | Today's events from the system calendar (EventKit). |
@@ -56,12 +56,14 @@ Two paths, chosen automatically:
   bar in the background, or posts Spotify's own ⌥⇧B Like shortcut straight to
   the Spotify process. Needs a one-time **Accessibility** grant (System
   Settings → Privacy & Security → Accessibility → NotchNest); the app prompts
-  on first use. Note: the ad-hoc code signature changes on every rebuild, so
-  the grant must be re-ticked after rebuilding.
+  on first use. Builds signed with the "NotchNest Dev" certificate keep the
+  grant across rebuilds; an ad-hoc signed build needs it re-ticked.
 - **Web API (optional):** real liked-state sync via OAuth/PKCE (Settings →
   Spotify). Spotify policy (since 2025) requires the developer-app owner to
   have **Premium**; on a free account the API returns 403 and NotchNest
   permanently falls back to local control (clicking Connect retries the API).
+  The tokens are kept in the login Keychain, and the sign-in redirect is
+  caught on 127.0.0.1 only.
 
 ## Build & run
 
@@ -138,14 +140,16 @@ directory on the way must be owned by the user and not group/world-writable.
   bundled source) as a child process (no menu-bar icon, no dock, no pill
   overlay — the notch is the only UI), auto-restarts it if it dies, and
   terminates it on quit. The engine keeps a single-instance guard as a backstop.
-- User state stays in `~/.murmur/` (config.yaml, history db, log).
+- User state stays in `~/.murmur/` (config.yaml, history db, log), readable
+  only by you.
 - The repo's own `DictationEngine/.venv` is only for development (tests,
   regenerating the lockfile — see the header of `requirements.lock`).
 
 They talk through two files in `~/.murmur`:
 
 ```
-notch.json   engine -> NotchNest   {"state","text","ts","running","settings"}   (~1s heartbeat)
+notch.json   engine -> NotchNest   {"state","text","ts","running","settings"}   (~1s heartbeat;
+                                    "text" is cleared 30 s after each transcript)
 notch.cmd    NotchNest -> engine   toggle|start|stop|cancel  OR  set <dotted.key> <json>
 ```
 
@@ -158,6 +162,32 @@ back, and only allowlisted keys are writable via the cmd file.
 **Permissions:** as a child process the engine uses NotchNest's TCC identity —
 NotchNest needs Microphone plus the same Accessibility grant the Like button
 uses (hotkeys + text insertion). Old Murmur.app grants don't carry over.
+
+## Privacy & security
+
+Everything runs on the Mac. What NotchNest does to keep it that way:
+
+- **Dictated words stay out of the logs.** `murmur.log` records how long each
+  transcript was, not what was said (set `logging.level: DEBUG` to see the
+  words while debugging). `~/.murmur` and its files are readable only by you.
+  The engine hands each transcript to NotchNest and clears it from `notch.json`
+  30 seconds later; NotchNest keeps the session's history in memory only.
+- **The AI cleanup server must be on this Mac.** `llm.ollama.url` has to be
+  `localhost`, `127.0.0.1` or `::1`. Requests ignore proxy settings and never
+  follow redirects, so a transcript can't be routed elsewhere.
+- **Models are pinned.** The speech and cleanup models the installer sets up
+  load at the exact Hugging Face commits they were tested with
+  (`DictationEngine/murmur/models.py`), not whatever the repo holds today.
+  Packages are hash-locked (`requirements.lock`).
+- **Secrets live in the Keychain** (Spotify tokens), and the Spotify sign-in
+  listener answers on 127.0.0.1 only.
+- **Hardened runtime.** The app and its `uv` helper are signed with it, so no
+  other process can inject code into the one holding the microphone and
+  Accessibility grants. `Resources/NotchNest.entitlements` lists the only
+  exceptions: Apple Events, microphone, calendars.
+- **CI** builds the app and runs the engine tests on every push and pull
+  request (`.github/workflows/ci.yml`).
+- Not notarized (that needs a paid Apple Developer ID); see "Sharing it".
 
 ## Architecture
 

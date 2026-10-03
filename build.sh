@@ -65,9 +65,13 @@ else
     IDENTITY="-"
     NOTE="ad-hoc — TCC grants reset each rebuild"
 fi
-# Inside-out: the nested helper first, then the bundle that seals it.
-codesign --force --sign "$IDENTITY" "$BUNDLE/Contents/Helpers/uv"
-codesign --force --sign "$IDENTITY" "$BUNDLE"
+# Inside-out: the nested helper first, then the bundle that seals it. Both run
+# with the hardened runtime, so nothing can inject code into a process holding
+# NotchNest's microphone and Accessibility grants; the entitlements list the
+# protected services the app genuinely uses.
+codesign --force --options runtime --sign "$IDENTITY" "$BUNDLE/Contents/Helpers/uv"
+codesign --force --options runtime --entitlements Resources/NotchNest.entitlements \
+    --sign "$IDENTITY" "$BUNDLE"
 codesign --verify --strict "$BUNDLE"
 echo "    signed ($NOTE)"
 

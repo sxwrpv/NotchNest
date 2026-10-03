@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ClipboardView: View {
     @EnvironmentObject var manager: ClipboardManager
+    @EnvironmentObject var settings: SettingsStore
     @State private var copiedID: UUID?
 
     var body: some View {
@@ -13,6 +14,15 @@ struct ClipboardView: View {
                 NotchTextField(text: $manager.search, placeholder: "Search clipboard")
                     .frame(height: 18)
                 Spacer(minLength: 4)
+                Button {
+                    settings.clipboardPaused.toggle()
+                } label: {
+                    Image(systemName: settings.clipboardPaused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(settings.clipboardPaused ? Theme.accent : Theme.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .help(settings.clipboardPaused ? "Resume clipboard history" : "Pause clipboard history")
                 Button("Clear") { manager.clearUnpinned() }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
@@ -51,7 +61,8 @@ struct ClipboardView: View {
             Image(systemName: "doc.on.clipboard")
                 .font(.system(size: 24))
                 .foregroundStyle(Theme.tertiaryText)
-            Text(manager.search.isEmpty ? "Clipboard history is empty" : "No matches")
+            Text(!manager.search.isEmpty ? "No matches"
+                 : settings.clipboardPaused ? "Clipboard history is paused" : "Clipboard history is empty")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.secondaryText)
         }

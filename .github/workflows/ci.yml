@@ -1,0 +1,41 @@
+# Builds the app and runs the dictation engine's tests on every push to main
+# and every pull request. Actions are pinned to commits, not movable tags.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: Build app
+    # Liquid Glass needs the macOS 26 SDK.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Lint plists
+        run: plutil -lint Resources/Info.plist Resources/NotchNest.entitlements
+      - name: Build
+        run: swift build -c release
+
+  engine:
+    name: Engine tests
+    # Apple Silicon: the lockfile is for arm64 macOS (MLX, PyObjC).
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the hash-locked engine dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --require-hashes --no-deps -r DictationEngine/requirements.lock
+          .venv/bin/pip install pytest==9.1.1
+      - name: Test
+        working-directory: DictationEngine
+        run: ../.venv/bin/python -m pytest -q

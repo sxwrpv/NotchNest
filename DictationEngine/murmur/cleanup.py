@@ -6,6 +6,7 @@ import re
 from typing import Optional
 
 from .llm import LLMRouter, LLMUnavailable
+from .privacy import said
 
 log = logging.getLogger(__name__)
 
@@ -229,9 +230,9 @@ class CleanupEngine:
             if _sane(raw, out):
                 return out, backend
             log.warning(
-                "LLM cleanup output failed sanity check (%r for input %r); using rules",
-                out[:120],
-                raw[:120],
+                "LLM cleanup output failed sanity check (%s for input %s); using rules",
+                said(log, out[:120]),
+                said(log, raw[:120]),
             )
             return rule_based_cleanup(raw), "rules-guard"
         except LLMUnavailable as e:

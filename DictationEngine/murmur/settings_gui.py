@@ -715,8 +715,12 @@ class SettingsGUI:
         # advanced
         updates["llm.backend"] = str(g["llm_backend"].titleOfSelectedItem())
         url = str(g["ollama_url"].stringValue()).strip()
-        if not url.startswith(("http://localhost", "http://127.0.0.1")):
-            errors.append("Ollama URL must be a localhost address (Murmur never talks to the network).")
+        try:
+            from .llm import local_base_url
+
+            url = local_base_url(url)
+        except ValueError as e:
+            errors.append(f"Ollama URL {e} (Murmur never talks to the network).")
         updates["llm.ollama.url"] = url
         updates["llm.ollama.model"] = str(g["ollama_model"].stringValue()).strip()
         updates["llm.mlx.model"] = str(g["mlx_model"].stringValue()).strip()

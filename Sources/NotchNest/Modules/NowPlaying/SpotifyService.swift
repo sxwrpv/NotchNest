@@ -38,19 +38,38 @@ final class SpotifyService: ObservableObject {
     private var pendingState: String?
     private var timeoutWork: DispatchWorkItem?
 
+    /// The tokens are secrets and live in the Keychain; the expiry time and
+    /// the blocked flag aren't, and stay in UserDefaults.
     private enum Keys {
-        static let access = "spotifyAccessToken"
-        static let refresh = "spotifyRefreshToken"
+        static let access = "spotify.accessToken"
+        static let refresh = "spotify.refreshToken"
         static let expiry = "spotifyTokenExpiry"
         static let webBlocked = "spotifyWebAPIBlocked"
+        /// Where 1.1.x and earlier kept the tokens, in UserDefaults.
+        static let legacyAccess = "spotifyAccessToken"
+        static let legacyRefresh = "spotifyRefreshToken"
     }
 
     init(settings: SettingsStore) {
         self.settings = settings
-        if UserDefaults.standard.string(forKey: Keys.refresh) != nil {
+        moveLegacyTokensToKeychain()
+        if Keychain.string(for: Keys.refresh) != nil {
             connection = .connected
         }
-        webAPIBlocked = UserDefaults.standard.bool(forKey: Keys.webBlocked)
+        webAPIBlocked = defaults.bool(forKey: Keys.webBlocked)
+    }
+
+    /// Older versions stored the tokens in UserDefaults, readable from the
+    /// preferences file and its backups. Move them, deleting each one only
+    /// once the Keychain holds it.
+    private func moveLegacyTokensToKeychain() {
+        for (legacy, account) in [(Keys.legacyAccess, Keys.access), (Keys.legacyRefresh, Keys.refresh)] {
+            guard let token = defaults.string(forKey: legacy) else { continue }
+            if Keychain.set(token, for: account) {
+                defaults.removeObject(forKey: legacy)
+                nnlog("spotify: moved \(account) to the keychain")
+            }
+        }
     }
 
     private var clientID: String {
@@ -413,8 +432,8 @@ final class SpotifyService: ObservableObject {
     }
 
     func disconnect() {
-        defaults.removeObject(forKey: Keys.access)
-        defaults.removeObject(forKey: Keys.refresh)
+        Keychain.delete(Keys.access)
+        Keychain.delete(Keys.refresh)
         defaults.removeObject(forKey: Keys.expiry)
         likedCache = [:]
         stopListener()
@@ -425,16 +444,26 @@ final class SpotifyService: ObservableObject {
         stopListener()
         pendingVerifier = nil
         pendingState = nil
-        connection = defaults.string(forKey: Keys.refresh) != nil ? .connected : .disconnected
+        connection = Keychain.string(for: Keys.refresh) != nil ? .connected : .disconnected
         lastError = message
     }
 
     // MARK: - Loopback redirect listener
 
+    /// Listens on 127.0.0.1 only. Bound to every interface, anyone on the same
+    /// network could reach the port and break a sign-in in progress.
     private func startListener() throws {
         stopListener()
-        let l = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: Self.redirectPort)!)
+        let params = NWParameters.tcp
+        params.acceptLocalOnly = true
+        params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback),
+                                                 port: NWEndpoint.Port(rawValue: Self.redirectPort)!)
+        let l = try NWListener(using: params)
         l.newConnectionHandler = { [weak self] conn in
+            guard Self.isLoopback(conn.endpoint) else {
+                conn.cancel()
+                return
+            }
             conn.start(queue: .main)
             conn.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
                 Task { @MainActor [weak self] in
@@ -444,6 +473,15 @@ final class SpotifyService: ObservableObject {
         }
         l.start(queue: .main)
         listener = l
+    }
+
+    nonisolated private static func isLoopback(_ endpoint: NWEndpoint) -> Bool {
+        guard case let .hostPort(host, _) = endpoint else { return false }
+        switch host {
+        case .ipv4(let address): return address.isLoopback
+        case .ipv6(let address): return address.isLoopback
+        default: return false
+        }
     }
 
     private func stopListener() {
@@ -459,7 +497,7 @@ final class SpotifyService: ObservableObject {
             conn.cancel(); return
         }
         let parts = firstLine.split(separator: " ")
-        guard parts.count >= 2 else { conn.cancel(); return }
+        guard parts.count >= 2, parts[0] == "GET" else { conn.cancel(); return }
         let target = String(parts[1])
 
         // Ignore stray requests (favicon etc.) without tearing the flow down.
@@ -471,14 +509,20 @@ final class SpotifyService: ObservableObject {
         let query = URLComponents(string: "http://127.0.0.1\(target)")?.queryItems ?? []
         func value(_ name: String) -> String? { query.first { $0.name == name }?.value }
 
+        // Only the redirect carrying our state may end the flow. Anything else
+        // (a stale tab, or another program on this Mac) is answered and
+        // ignored, so it can't cancel the sign-in the user is doing.
+        guard let pendingState, value("state") == pendingState else {
+            respond(conn, status: "400 Bad Request", html: resultPage(ok: false))
+            return
+        }
         if let error = value("error") {
             respond(conn, status: "200 OK", html: resultPage(ok: false))
             failConnect(error == "access_denied" ? "Authorization was denied." : "Spotify error: \(error)")
             return
         }
-        guard let code = value("code"), value("state") == pendingState else {
-            respond(conn, status: "200 OK", html: resultPage(ok: false))
-            failConnect("Authorization state mismatch — try again.")
+        guard let code = value("code") else {
+            respond(conn, status: "400 Bad Request", html: resultPage(ok: false))
             return
         }
 
@@ -529,7 +573,7 @@ final class SpotifyService: ObservableObject {
     }
 
     private func refreshAccessToken() async -> String? {
-        guard let refresh = defaults.string(forKey: Keys.refresh) else { return nil }
+        guard let refresh = Keychain.string(for: Keys.refresh) else { return nil }
         let result = await tokenRequest([
             "grant_type": "refresh_token",
             "refresh_token": refresh,
@@ -545,8 +589,8 @@ final class SpotifyService: ObservableObject {
     }
 
     private func validAccessToken() async -> String? {
-        if let token = defaults.string(forKey: Keys.access),
-           Date().timeIntervalSince1970 < defaults.double(forKey: Keys.expiry) - 60 {
+        if Date().timeIntervalSince1970 < defaults.double(forKey: Keys.expiry) - 60,
+           let token = Keychain.string(for: Keys.access) {
             return token
         }
         return await refreshAccessToken()
@@ -559,10 +603,10 @@ final class SpotifyService: ObservableObject {
     }
 
     private func store(_ tokens: TokenSet) {
-        defaults.set(tokens.access, forKey: Keys.access)
+        Keychain.set(tokens.access, for: Keys.access)
         defaults.set(Date().timeIntervalSince1970 + tokens.expiresIn, forKey: Keys.expiry)
         if let refresh = tokens.refresh {
-            defaults.set(refresh, forKey: Keys.refresh)
+            Keychain.set(refresh, for: Keys.refresh)
         }
     }
 

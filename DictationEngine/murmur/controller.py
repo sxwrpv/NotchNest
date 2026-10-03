@@ -15,6 +15,7 @@ from .dictionary import PersonalDictionary
 from .inject import TextInjector, frontmost_app_info
 from .llm import LLMRouter, LLMUnavailable
 from .overlay import Overlay
+from .privacy import said
 from .snippets import Snippets
 from .styles import StyleManager
 from .transcriber import MLXWhisperTranscriber, is_degenerate
@@ -259,7 +260,8 @@ class Controller:
                 initial_prompt=self.dictionary.initial_prompt(),
                 language=self.config.get("asr.language", "en"),
             )
-            log.info("ASR (%.1fs audio) in %.2fs: %r", len(samples) / 16000.0, time.time() - t0, raw)
+            log.info("ASR (%.1fs audio) in %.2fs: %s", len(samples) / 16000.0, time.time() - t0,
+                     said(log, raw))
             if self._canceled(gen):
                 log.info("canceled: ASR result discarded")
                 return
@@ -273,7 +275,7 @@ class Controller:
             # for the whole window. That is never dictation, and it used to be
             # cleaned up and typed straight into whatever app had focus.
             if is_degenerate(raw):
-                log.warning("discarding degenerate transcript: %r", raw[:80])
+                log.warning("discarding degenerate transcript: %s", said(log, raw[:80]))
                 self.last_error = (
                     "Couldn't make out any speech — nothing was inserted. "
                     "Check the microphone input level and that the right "
@@ -303,7 +305,7 @@ class Controller:
                     dictionary_terms=self.dictionary.all_terms(),
                 )
                 final = self.dictionary.apply_replacements(final)
-                log.info("cleanup via %s (style=%s): %r", engine, style_name, final)
+                log.info("cleanup via %s (style=%s): %s", engine, style_name, said(log, final))
                 # visible (one-time) note when we degraded to rule-based
                 # cleanup even though an LLM backend is configured
                 if (
@@ -321,7 +323,7 @@ class Controller:
                     )
 
             if self._canceled(gen):
-                log.info("canceled: cleaned result discarded (was %r)", final[:80])
+                log.info("canceled: cleaned result discarded (was %s)", said(log, final[:80]))
                 return
             self.last_final = final
             self._deliver(final, bundle, pid)
@@ -380,7 +382,8 @@ class Controller:
             log.info("canceled: command rewrite discarded")
             return
         self.last_final = rewritten
-        log.info("command rewrite via %s: %r -> %r", engine, instruction, rewritten[:120])
+        log.info("command rewrite via %s: %s -> %s", engine, said(log, instruction),
+                 said(log, rewritten[:120]))
         self._deliver(rewritten, bundle, pid)
 
     # ---- streaming partials ---------------------------------------------------

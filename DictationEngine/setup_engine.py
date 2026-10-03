@@ -110,14 +110,16 @@ def _present_bytes(repo: str, sha: str, files: dict) -> int:
 
 def _download(label: str, repo: str, index: int, count: int) -> None:
     from huggingface_hub import HfApi, snapshot_download
+    from murmur.models import pinned_revision
 
     base = {"item": label, "repo": repo, "index": index, "count": count}
+    revision = pinned_revision(repo)  # the engine loads exactly this commit
     try:
-        info = HfApi().model_info(repo, files_metadata=True)
+        info = HfApi().model_info(repo, revision=revision, files_metadata=True)
     except Exception as e:
         # Offline: fine if a previous run already fetched it.
         try:
-            snapshot_download(repo, local_files_only=True)
+            snapshot_download(repo, revision=revision, local_files_only=True)
             emit("model_ready", cached=True, offline=True, **base)
             return
         except Exception:
@@ -136,7 +138,7 @@ def _download(label: str, repo: str, index: int, count: int) -> None:
 
         def run():
             try:
-                snapshot_download(repo)  # main ref, so offline loads resolve later
+                snapshot_download(repo, revision=revision)
             except Exception as e:  # surfaced after the join below
                 result["error"] = e
 
@@ -182,11 +184,12 @@ def cmd_verify() -> None:
         fail("Metal isn't available — dictation needs an Apple Silicon Mac.")
 
     from huggingface_hub import snapshot_download
+    from murmur.models import pinned_revision
 
     missing = []
     for _, repo in wanted_models():
         try:
-            snapshot_download(repo, local_files_only=True)
+            snapshot_download(repo, revision=pinned_revision(repo), local_files_only=True)
         except Exception:
             missing.append(repo)
     if missing:

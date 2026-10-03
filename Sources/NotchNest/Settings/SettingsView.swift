@@ -6,6 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject var spotify: SpotifyService
     @EnvironmentObject var dictation: DictationManager
     @EnvironmentObject var installer: EngineInstaller
+    @State private var confirmClipboardDelete = false
 
     private static let hotkeyOptions = [
         "fn", "right_option", "left_option", "right_command", "left_command",
@@ -59,12 +60,33 @@ struct SettingsView: View {
                               range: 0.18...0.6, step: 0.02)
                 }
 
-                section("Clipboard", nil) {
+                section("Clipboard", "History of copied text — only while the Clipboard module is on") {
+                    Toggle("Pause clipboard history", isOn: $settings.clipboardPaused)
+                    Picker("Forget unpinned items after", selection: $settings.clipboardRetentionDays) {
+                        Text("1 day").tag(1)
+                        Text("7 days").tag(7)
+                        Text("30 days").tag(30)
+                        Text("Never").tag(0)
+                    }
                     Stepper("History limit: \(settings.clipboardLimit)",
                             value: $settings.clipboardLimit, in: 10...200, step: 10)
-                        .onChange(of: settings.clipboardLimit) { _, newValue in
-                            clipboard.updateLimit(newValue)
+                    Text("Passwords and anything apps mark as private are never recorded, nor are copies made while a password manager is in front.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Spacer()
+                        Button("Delete All Clipboard History…", role: .destructive) {
+                            confirmClipboardDelete = true
                         }
+                        .disabled(clipboard.entries.isEmpty)
+                    }
+                    .confirmationDialog("Delete all clipboard history?",
+                                        isPresented: $confirmClipboardDelete) {
+                        Button("Delete All, Including Pinned", role: .destructive) { clipboard.deleteAll() }
+                    } message: {
+                        Text("This can't be undone.")
+                    }
                 }
 
                 section("Dictation", "Engine settings — applied live") {

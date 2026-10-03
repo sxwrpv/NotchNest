@@ -23,6 +23,30 @@ class LLMUnavailable(Exception):
     pass
 
 
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def local_base_url(url: str) -> str:
+    """Normalizes a local server URL, or raises ValueError unless it points at
+    this Mac. Transcripts go to this server, so a prefix check isn't enough:
+    "http://localhost.example.com" starts with "http://localhost"."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(str(url).strip())
+    if parts.scheme not in ("http", "https"):
+        raise ValueError("must start with http:// or https://")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("must not contain a user name or password")
+    if parts.query or parts.fragment or parts.path not in ("", "/"):
+        raise ValueError("must be just the server address, like http://localhost:11434")
+    host = (parts.hostname or "").lower()
+    if host not in LOOPBACK_HOSTS:
+        raise ValueError("must be localhost, 127.0.0.1 or ::1")
+    port = parts.port  # raises ValueError when out of range or not a number
+    netloc = f"[{host}]" if ":" in host else host
+    return f"{parts.scheme}://{netloc}" + (f":{port}" if port else "")
+
+
 class LLMBackend(ABC):
     name = "abstract"
 
@@ -44,9 +68,29 @@ class OllamaBackend(LLMBackend):
         self.config = config
         self._last_check = 0.0
         self._last_ok = False
+        self._warned_url = None
+        self._session = None
 
     def _url(self) -> str:
-        return str(self.config.get("llm.ollama.url", "http://localhost:11434")).rstrip("/")
+        """The configured server, or LLMUnavailable if it isn't on this Mac."""
+        raw = str(self.config.get("llm.ollama.url", "http://localhost:11434"))
+        try:
+            return local_base_url(raw)
+        except ValueError as e:
+            if raw != self._warned_url:  # once per bad value, not per hotkey
+                self._warned_url = raw
+                log.warning("ignoring llm.ollama.url: it %s", e)
+            raise LLMUnavailable(f"llm.ollama.url {e}") from e
+
+    def _http(self):
+        """A session that never consults proxy settings or environment
+        variables, so a request for localhost can't be routed elsewhere."""
+        if self._session is None:
+            import requests
+
+            self._session = requests.Session()
+            self._session.trust_env = False
+        return self._session
 
     def available(self) -> bool:
         # Cache the health check for a few seconds; it's called on every hotkey.
@@ -55,17 +99,14 @@ class OllamaBackend(LLMBackend):
             return self._last_ok
         self._last_check = now
         try:
-            import requests
-
-            r = requests.get(self._url() + "/api/tags", timeout=0.8)
+            r = self._http().get(self._url() + "/api/tags", timeout=0.8,
+                                 allow_redirects=False)
             self._last_ok = r.status_code == 200
         except Exception:
             self._last_ok = False
         return self._last_ok
 
     def generate(self, system, user, max_tokens=1024, temperature=0.15) -> str:
-        import requests
-
         payload = {
             "model": self.config.get("llm.ollama.model", "qwen2.5:3b-instruct"),
             "messages": [
@@ -77,8 +118,12 @@ class OllamaBackend(LLMBackend):
             "options": {"temperature": temperature, "num_predict": max_tokens},
         }
         try:
-            r = requests.post(self._url() + "/api/chat", json=payload, timeout=120)
+            # No redirects: a 307/308 would resend the transcript wherever it points.
+            r = self._http().post(self._url() + "/api/chat", json=payload, timeout=120,
+                                  allow_redirects=False)
             r.raise_for_status()
+            if r.status_code != 200:
+                raise LLMUnavailable(f"ollama answered HTTP {r.status_code}")
             data = r.json()
             return (data.get("message") or {}).get("content", "").strip()
         except Exception as e:
@@ -125,7 +170,9 @@ class MLXBackend(LLMBackend):
             self.unload()
             log.info("loading MLX LLM %s ...", model_id)
             t0 = time.time()
-            self._model, self._tokenizer = load(model_id)
+            from .models import local_model_path
+
+            self._model, self._tokenizer = load(local_model_path(model_id))
             self._model_id = model_id
             log.info("MLX LLM loaded in %.1fs", time.time() - t0)
         return self._model, self._tokenizer
