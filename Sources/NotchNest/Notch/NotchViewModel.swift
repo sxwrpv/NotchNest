@@ -22,6 +22,8 @@ extension ModuleID {
 final class NotchViewModel: ObservableObject {
     @Published var isExpanded = false
     @Published var isPinned = false
+    /// A file drag is hovering over the notch (set by `NotchHostingView`).
+    @Published var dropTargeted = false
     @Published var selectedTab: ModuleID
 
     /// Current pill / panel dimensions, kept in sync by `NotchController` so the

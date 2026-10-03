@@ -21,6 +21,17 @@ final class FileTrayManager: ObservableObject {
 
     private let defaultsKey = "fileTrayBookmarks"
 
+    /// Where promised files (Photos, Mail attachments, browser images) land.
+    /// The tray owns these copies and deletes them when they leave the tray.
+    static let inbox = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("NotchNest/File Tray", isDirectory: true)
+    private let promiseQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+
     init() { load() }
 
     // MARK: - Mutation
@@ -38,14 +49,53 @@ final class FileTrayManager: ObservableObject {
         if changed { save() }
     }
 
+    /// Writes promised files into a fresh folder under `inbox` (keeping their
+    /// names without clashing) and adds each one as it arrives.
+    func receive(_ promises: [NSFilePromiseReceiver]) {
+        let folder = Self.inbox.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            fileLog("tray: can't create \(folder.path): \(error.localizedDescription)")
+            return
+        }
+        for promise in promises {
+            promise.receivePromisedFiles(atDestination: folder, options: [:],
+                                         operationQueue: promiseQueue) { [weak self] url, error in
+                DispatchQueue.main.async {
+                    if let error {
+                        fileLog("tray: promised file failed: \(error.localizedDescription)")
+                    } else {
+                        self?.add(urls: [url])
+                    }
+                }
+            }
+        }
+    }
+
     func remove(_ item: TrayItem) {
         items.removeAll { $0.id == item.id }
+        discardIfOwned(item.url)
         save()
     }
 
     func clear() {
+        items.forEach { discardIfOwned($0.url) }
         items.removeAll()
         save()
+    }
+
+    /// Deletes a promised-file copy the tray made; files that live anywhere
+    /// else are only ever referenced, never touched.
+    private func discardIfOwned(_ url: URL) {
+        let inbox = Self.inbox.standardizedFileURL.path + "/"
+        guard url.standardizedFileURL.path.hasPrefix(inbox) else { return }
+        let fm = FileManager.default
+        try? fm.removeItem(at: url)
+        let folder = url.deletingLastPathComponent()
+        if (try? fm.contentsOfDirectory(atPath: folder.path))?.isEmpty == true {
+            try? fm.removeItem(at: folder)
+        }
     }
 
     func reveal(_ item: TrayItem) {
@@ -56,12 +106,13 @@ final class FileTrayManager: ObservableObject {
         NSWorkspace.shared.open(item.url)
     }
 
-    // MARK: - AirDrop
+    // MARK: - Sharing
 
-    /// Opens the standard macOS share sheet anchored to a view, defaulting to AirDrop.
-    func share(_ item: TrayItem, from view: NSView) {
+    /// Opens the standard macOS share picker (AirDrop, Mail, Messages…) under
+    /// `rect` in `view`.
+    func share(_ item: TrayItem, from view: NSView, at rect: CGRect) {
         let picker = NSSharingServicePicker(items: [item.url])
-        picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
+        picker.show(relativeTo: rect, of: view, preferredEdge: view.isFlipped ? .maxY : .minY)
     }
 
     // MARK: - Persistence
