@@ -21,7 +21,7 @@ builds with Swift Package Manager (no Xcode required).
 |---------------|--------------|
 | **Now Playing** | Controls Apple Music & Spotify (play/pause/next/prev, title, artist, artwork). Only scripts players that are already running — never launches them. For Spotify there's a **Like button** that saves/removes the current track from Liked Songs (see "Spotify Like button" below). |
 | **Dictation**   | Built-in push-to-talk dictation (the merged Murmur engine in `DictationEngine/`): live state, mic button, latest transcript, history (click to copy). New transcripts are copied to the clipboard. Settings live in NotchNest → Settings → Dictation. See "Dictation engine" below. |
-| **File Tray**   | Drag files onto the notch to stash them, drag them back out to any app, double-click to open, right-click to Reveal in Finder / Share (AirDrop) / Remove. Persists across launches via bookmarks. |
+| **File Tray**   | Drag files onto the notch to stash them, drag them back out to any app (a copy — the original stays put), double-click to open, right-click to Reveal in Finder / Share (AirDrop) / Remove. Holds references to your files, persisted across launches via bookmarks; files *promised* by Photos or Mail are saved to `~/Library/Application Support/NotchNest/File Tray` and deleted when removed from the tray. |
 | **Clipboard**   | Searchable, pinnable text history. Click any entry to re-copy. Pinned items never expire. |
 | **Timer**       | Pomodoro: focus → short break, long break every 4th session. Ring progress + a system notification on each transition. |
 | **Note**        | A persistent quick-note scratchpad (auto-saves). |

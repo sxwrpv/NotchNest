@@ -118,19 +118,7 @@ final class SpotifyService: ObservableObject {
 
     /// Unified log redacts dynamic NSLog strings as <private>, which made the
     /// like path undebuggable — so the like machinery logs to a plain file.
-    private func nnlog(_ message: String) {
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        let line = "\(stamp) \(message)\n"
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/NotchNest.log")
-        if let handle = FileHandle(forWritingAtPath: url.path) {
-            handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
-            try? handle.close()
-        } else {
-            try? line.write(to: url, atomically: true, encoding: .utf8)
-        }
-    }
+    private func nnlog(_ message: String) { fileLog(message) }
 
     /// Likes the current track by driving the Spotify desktop app itself.
     /// Strategy 1: find a "Save to Your Library / Liked Songs" item in Spotify's

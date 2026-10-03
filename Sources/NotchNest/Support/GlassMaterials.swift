@@ -49,8 +49,16 @@ struct NotchGlass: ViewModifier {
     @ViewBuilder
     private var glassBase: some View {
         if #available(macOS 26.0, *) {
-            Color.clear
-                .glassEffect(.regular.tint(Color.black.opacity(effectiveTint)), in: shape)
+            ZStack {
+                // Liquid Glass is composited by the window server, so the window's
+                // own pixels under it stay clear, and macOS routes file drags past
+                // clear pixels: without this base the collapsed notch never
+                // received a drop. Solid black collapsed (it reads as the physical
+                // notch anyway), barely there once expanded.
+                shape.fill(Color.black.opacity(expanded ? 0.02 : 1))
+                Color.clear
+                    .glassEffect(.regular.tint(Color.black.opacity(effectiveTint)), in: shape)
+            }
         } else {
             ZStack {
                 VisualEffectView(material: .hudWindow, blending: .behindWindow)

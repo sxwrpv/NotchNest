@@ -21,7 +21,7 @@ final class NotchController {
         self.panel = NotchPanel(contentRect: geometry.collapsedFrame)
 
         let root = env.inject(NotchRootView())
-        let hosting = NSHostingView(rootView: AnyView(root))
+        let hosting = NotchHostingView(env: env, rootView: AnyView(root))
         hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
 

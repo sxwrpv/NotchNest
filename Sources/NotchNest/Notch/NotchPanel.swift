@@ -11,7 +11,10 @@ final class NotchPanel: NSPanel {
         )
 
         isFloatingPanel = true
-        level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
+        // Just above the menu bar (24) and status items (25). Not higher: macOS
+        // stops delivering drag-and-drop to windows at the shielding tier, which
+        // is what kept files from ever landing in the File Tray.
+        level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isOpaque = false
         backgroundColor = .clear

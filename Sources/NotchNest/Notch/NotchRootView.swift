@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// The whole notch surface. Draws the glass panel and swaps between the collapsed
 /// pill and the expanded, tabbed content based on hover (and on file drags).
@@ -8,11 +7,9 @@ struct NotchRootView: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var nowPlaying: NowPlayingManager
     @EnvironmentObject var pomodoro: PomodoroManager
-    @EnvironmentObject var fileTray: FileTrayManager
     @EnvironmentObject var dictation: DictationManager
 
     @State private var collapseTask: DispatchWorkItem?
-    @State private var dropTargeted = false
 
     // Animations built live from user settings so the reveal is tunable.
     private var revealSpring: Animation {
@@ -33,15 +30,14 @@ struct NotchRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
         .contentShape(Rectangle())
-        // Window-wide drop target. Crucial: you can't hover-to-expand while dragging,
-        // so a drag entering the notch auto-opens the File Tray to receive the drop.
-        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-            handleFileDrop(providers)
-        }
-        .onChange(of: dropTargeted) { _, targeted in
-            if targeted, settings.isEnabled(.fileTray) {
+        // Drops are caught by NotchHostingView, which opens the File Tray as a
+        // drag arrives; once it leaves (or lands), fold back up when the
+        // pointer is off the panel.
+        .onChange(of: notch.dropTargeted) { _, targeted in
+            if targeted {
                 collapseTask?.cancel()
-                notch.presentFileTray()
+            } else {
+                collapseWhenPointerLeaves()
             }
         }
     }
@@ -85,7 +81,7 @@ struct NotchRootView: View {
         .frame(width: size.width, height: size.height, alignment: .top)
         .notchGlass(shape: shape, tint: settings.glassTint, expanded: expanded)
         .overlay {
-            if dropTargeted {
+            if notch.dropTargeted {
                 shape.stroke(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [6]))
                     .transition(.opacity)
             }
@@ -102,34 +98,22 @@ struct NotchRootView: View {
         }
     }
 
-    private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard settings.isEnabled(.fileTray) else { return false }
-        let group = DispatchGroup()
-        var urls: [URL] = []
-        let lock = NSLock()
-        for provider in providers {
-            guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { continue }
-            group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                defer { group.leave() }
-                var resolved: URL?
-                if let data = item as? Data {
-                    resolved = URL(dataRepresentation: data, relativeTo: nil)
-                } else if let url = item as? URL {
-                    resolved = url
-                }
-                if let resolved {
-                    lock.lock(); urls.append(resolved); lock.unlock()
-                }
+    /// Hover tracking is suspended during a drag, so a drag that passes over
+    /// the notch (or ends in a drop) never reports the pointer leaving — the
+    /// tray would stay open. Instead, check where the pointer is and collapse
+    /// once it's off the panel; hovering back in cancels this as usual.
+    private func collapseWhenPointerLeaves() {
+        collapseTask?.cancel()
+        let task = DispatchWorkItem {
+            let panel = NSApp.windows.first { $0 is NotchPanel }
+            if let panel, panel.frame.contains(NSEvent.mouseLocation) {
+                collapseWhenPointerLeaves()
+            } else {
+                notch.collapse()
             }
         }
-        group.notify(queue: .main) {
-            if !urls.isEmpty {
-                fileTray.add(urls: urls)
-                notch.presentFileTray()
-            }
-        }
-        return true
+        collapseTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: task)
     }
 
     private func scheduleCollapse() {

@@ -63,8 +63,11 @@ struct FileTrayView: View {
 
 private struct FileChip: View {
     @EnvironmentObject var manager: FileTrayManager
+    @EnvironmentObject var notch: NotchViewModel
     let item: TrayItem
     @State private var hovering = false
+    /// Where the chip sits in the panel, so Share… can point at it.
+    @State private var frameInPanel: CGRect = .zero
 
     var body: some View {
         VStack(spacing: 5) {
@@ -93,8 +96,11 @@ private struct FileChip: View {
                 .padding(3)
             }
         }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frameInPanel = $0 }
         .onHover { hovering = $0 }
-        .onDrag { NSItemProvider(contentsOf: item.url) ?? NSItemProvider(object: item.url as NSURL) }
+        .gesture(DragGesture(minimumDistance: 3).onChanged { _ in
+            TrayDrag.begin(item, onLeavePanel: notch.collapse)
+        })
         .onTapGesture(count: 2) { manager.open(item) }
         .contextMenu {
             Button("Open") { manager.open(item) }
@@ -107,7 +113,56 @@ private struct FileChip: View {
     }
 
     private func share() {
+        // The panel's hosting view is flipped, so SwiftUI's global frame is
+        // already in its coordinates.
         guard let view = NSApp.windows.first(where: { $0 is NotchPanel })?.contentView else { return }
-        manager.share(item, from: view)
+        manager.share(item, from: view, at: frameInPanel)
+    }
+}
+
+/// Drags a tray file out as the file itself. SwiftUI's `.onDrag` copies it into
+/// a cache first, so apps received a duplicate (Finder even named it
+/// "JPEG image.jpeg") and big files were copied before the drop.
+private enum TrayDrag {
+    private static let source = Source()
+
+    /// Starts the session from the drag event SwiftUI is currently handling.
+    /// `onLeavePanel` runs once the drag is off the panel, to get it out of the way.
+    static func begin(_ item: TrayItem, onLeavePanel: @escaping () -> Void) {
+        guard !source.active,
+              let event = NSApp.currentEvent, event.type == .leftMouseDragged,
+              let view = event.window?.contentView else { return }
+        let point = view.convert(event.locationInWindow, from: nil)
+        let draggingItem = NSDraggingItem(pasteboardWriter: item.url as NSURL)
+        draggingItem.setDraggingFrame(NSRect(x: point.x - 20, y: point.y - 20, width: 40, height: 40),
+                                      contents: item.icon)
+        source.active = true
+        source.onLeavePanel = onLeavePanel
+        view.beginDraggingSession(with: [draggingItem], event: event, source: source)
+    }
+
+    private final class Source: NSObject, NSDraggingSource {
+        var active = false
+        var onLeavePanel: (() -> Void)?
+
+        // Copy only: the tray points at the user's originals, so a drop (or the
+        // Trash) must never move them.
+        func draggingSession(_ session: NSDraggingSession,
+                             sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+            context == .outsideApplication ? .copy : []
+        }
+
+        func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+            guard let panel = NSApp.windows.first(where: { $0 is NotchPanel }),
+                  !panel.frame.contains(screenPoint) else { return }
+            onLeavePanel?()
+            onLeavePanel = nil
+        }
+
+        func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint,
+                             operation: NSDragOperation) {
+            active = false
+            onLeavePanel = nil
+        }
     }
 }

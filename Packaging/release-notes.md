@@ -10,6 +10,15 @@ It downloads the app, checks its SHA-256, installs it into Applications and open
 
 **Prefer a disk image?** Download `NotchNest-*.dmg` below. Macs block un-notarized apps that were downloaded in a browser, so the first open needs **System Settings → Privacy & Security → Open Anyway** (see *READ ME FIRST* inside the image).
 
+## What's new in 1.1.1
+
+The **File Tray** works now. In 1.1.0, files dropped on the notch never landed.
+
+- **Drop files straight onto the closed notch.** The tray opens to catch them and folds away again once you move on.
+- **Drag files back out to any app** and you get the file itself, under its real name. It's always a copy, so your original stays where it was.
+- **Photos and Mail attachments** can be dropped in too. The tray keeps its own copy and deletes it when you remove the item.
+- **Share…** (right-click a file) opens AirDrop, Mail, Messages and more right under the file.
+
 ## What's new in 1.1
 
 - **Installs itself on a new Mac.** The setup assistant runs on first launch. It sets up a private Python 3.12 and the hash-locked dictation engine, then downloads the speech and AI cleanup models (~2.5 GB, one time) with live progress. After that, everything runs offline.
