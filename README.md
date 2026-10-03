@@ -187,7 +187,5 @@ module: add a case to `ModuleID`, a manager to `AppEnvironment`, and a `case` in
 ## Notes / possible extensions
 
 - **Artwork**: Spotify via artwork URL, Music via raw artwork data.
-- Not yet built (were in the original): camera mirror, app/URL bookmarks launcher,
-  the mini-game, and the on-device "AI" refinements. The module system makes each a
-  drop-in addition.
+- Not yet built: camera mirror, app/URL bookmarks launcher.
 - Clipboard history is text-only by design (images/files intentionally skipped).
