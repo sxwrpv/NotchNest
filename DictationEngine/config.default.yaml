@@ -94,13 +94,13 @@ styles:
 
 overlay:
   # NotchNest's notch is the dictation UI; the engine's own pill stays off.
-  enabled: false
+  enabled: true
   width: 400
   # Keep the status pill on screen at all times (small dim dot when idle,
   # full pill when listening/processing), not just during dictation.
   # Set to false for the old behavior: pill only appears during a session.
   # Also toggleable live from the menu bar ("Show Status Pill").
-  always_visible: true
+  always_visible: false
   # The pill is interactive: click it to start/stop dictation, hover for the
   # style switcher (and a cancel ✕ during a session), drag to move it,
   # right-click for a quick menu. Dragging writes the new anchor here:
