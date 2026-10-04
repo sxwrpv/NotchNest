@@ -19,6 +19,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Lint plists
         run: plutil -lint Resources/Info.plist Resources/NotchNest.entitlements
+      - name: Lint installer
+        # bash 3.2 on users' Macs (UTF-8 locale) treats non-ASCII right after
+        # "$NAME" as part of the name: "$VERSION…" fails as unbound.
+        run: |
+          bash -n Packaging/install.sh.in
+          if LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~]' Packaging/install.sh.in; then
+            echo "Put braces around the variables above (\${NAME})." >&2
+            exit 1
+          fi
       - name: Build
         run: swift build -c release
 
