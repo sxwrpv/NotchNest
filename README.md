@@ -150,8 +150,25 @@ They talk through two files in `~/.murmur`:
 ```
 notch.json   engine -> NotchNest   {"state","text","ts","running","settings"}   (~1s heartbeat;
                                     "text" is cleared 30 s after each transcript)
-notch.cmd    NotchNest -> engine   toggle|start|stop|cancel  OR  set <dotted.key> <json>
+notch.cmd    NotchNest -> engine   <counter> <mac> <command>
+                                   <command> = toggle|start|stop|cancel  OR  set <dotted.key> <json>
 ```
+
+**notch.cmd only obeys NotchNest.** Any process running as you can write to
+`~/.murmur`, and without a check a planted `start` would record under
+NotchNest's microphone grant. So each time NotchNest spawns the engine it makes
+a random 32-byte secret and writes it, hex, as one line into the engine's
+stdin: a pipe only NotchNest holds, so the secret is never on disk, on a
+command line or in the environment. Every command is then signed with it:
+`<mac>` is the hex HMAC-SHA256 of `"<counter> <command>"`, and `<counter>`
+(1, 2, 3, … per engine launch) must grow with every command. The secret
+itself never goes in the file, since whatever can write the file can read it
+too. So a command someone sees can't be edited into another one or sent again.
+The engine drops anything unsigned, mis-signed or replayed (it logs a warning
+in `~/.murmur/murmur.log` without the command text) and deletes the file
+either way. NotchNest creates `notch.cmd` readable by you only (0600). An
+engine started any other way (`python main.py`, `run.sh`) gets no secret: it
+still publishes `notch.json` but ignores `notch.cmd` completely.
 
 **Dictation settings live in NotchNest → Settings → Dictation** (hotkeys,
 Whisper model, language, partials, AI cleanup, LLM backend, insertion mode,
@@ -172,6 +189,10 @@ Everything runs on the Mac. What NotchNest does to keep it that way:
   words while debugging). `~/.murmur` and its files are readable only by you.
   The engine hands each transcript to NotchNest and clears it from `notch.json`
   30 seconds later; NotchNest keeps the session's history in memory only.
+- **Only NotchNest can start a recording.** The engine records with
+  NotchNest's microphone grant, so it obeys only commands signed with a
+  secret NotchNest hands it at launch (see "Dictation engine"). Another
+  program can't use it to get at your microphone by writing to `notch.cmd`.
 - **The AI cleanup server must be on this Mac.** `llm.ollama.url` has to be
   `localhost`, `127.0.0.1` or `::1`. Requests ignore proxy settings and never
   follow redirects, so a transcript can't be routed elsewhere.

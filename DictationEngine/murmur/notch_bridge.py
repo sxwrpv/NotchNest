@@ -7,21 +7,45 @@ no config, so both sides stay trivial:
 
     notch.json  (Murmur  -> NotchNest)  {"state","text","ts","running","settings"}
                                         ("text" is cleared TEXT_TTL s after it appears)
-    notch.cmd   (NotchNest -> Murmur)   one word: toggle|start|stop|cancel
+    notch.cmd   (NotchNest -> Murmur)   <counter> <mac> <command>, where
+                                        <command> is toggle|start|stop|cancel
                                         or: set <dotted.key> <json-value>
 
 The "settings" block mirrors the dictation settings NotchNest exposes in its
 own Settings window; "set" commands write through Murmur's comment-preserving
 config writer, and the config hot-reload applies them within a second.
 
+Commands are signed, because anything running as this user can write to
+~/.murmur, and a `start` it slipped in would record under NotchNest's
+microphone grant. When NotchNest spawns the engine it makes a random 32-byte
+secret and writes it, hex, as one line into the engine's stdin: a pipe only
+NotchNest holds, so the secret is never on disk, on a command line or in the
+environment (main.py reads it with read_secret). Every command then carries
+
+    <mac>      hex HMAC-SHA256(secret, "<counter> <command>")
+    <counter>  1, 2, 3, ... per engine launch; it must always grow
+
+notch.cmd is readable by the very processes this guards against, so the
+secret itself never goes in it: the MAC means a line seen once can't be edited
+into another command, and the counter means it can't be replayed. Unsigned,
+mis-signed and replayed commands are logged (without their text) and dropped,
+and the file is deleted either way. With no secret (a plain `python main.py`
+dev run, or run.sh) the bridge still publishes notch.json but ignores
+notch.cmd entirely.
+
 The bridge only ever *reads* controller state and calls the same public
 controller methods the global hotkeys already call from a background thread,
 so it introduces no new threading assumptions.
 """
 
+import hashlib
+import hmac
 import json
 import logging
 import os
+import re
+import select
+import stat
 import tempfile
 import threading
 import time
@@ -46,18 +70,53 @@ SETTINGS_KEYS = [
     "ui.show_notifications",
 ]
 
-
 # How long a finished transcript stays in notch.json. NotchNest reads the file
 # several times a second and keeps its own in-memory history, so the words
 # needn't sit on disk after that.
 TEXT_TTL = 30.0
 
+# A genuine command is one short line; there's no reason to read more.
+MAX_CMD_BYTES = 4096
+_SECRET = re.compile(r"[0-9a-fA-F]{64}")  # 32 bytes, hex
+_COUNTER = re.compile(r"[1-9][0-9]{0,17}")
+_MAC = re.compile(r"[0-9a-f]{64}")
+
+
+def parse_secret(line) -> bytes | None:
+    """The command key in NotchNest's stdin line, or None if it isn't one."""
+    line = (line or "").strip()
+    return bytes.fromhex(line) if _SECRET.fullmatch(line) else None
+
+
+def read_secret(stream, timeout: float = 5.0) -> bytes | None:
+    """Reads the secret line NotchNest writes into the engine's stdin.
+
+    None, which leaves notch.cmd disabled, for a terminal, /dev/null, a closed
+    stdin, or a pipe that stays silent for `timeout` seconds (so a launcher
+    that hands over a pipe and never writes can't hang startup)."""
+    try:
+        if stream is None or stream.isatty():
+            return None
+        ready, _, _ = select.select([stream], [], [], timeout)
+        return parse_secret(stream.readline()) if ready else None
+    except (OSError, ValueError):
+        return None
+
+
+def sign_command(secret: bytes, counter: int, command: str) -> str:
+    """The notch.cmd line for `command`, exactly as NotchNest writes it."""
+    mac = hmac.new(secret, f"{counter} {command}".encode(), hashlib.sha256).hexdigest()
+    return f"{counter} {mac} {command}"
+
 
 class NotchBridge:
-    def __init__(self, controller, poll_interval: float = 0.25, heartbeat: float = 1.0):
+    def __init__(self, controller, poll_interval: float = 0.25, heartbeat: float = 1.0,
+                 secret: bytes | None = None):
         self.controller = controller
         self.poll_interval = poll_interval
         self.heartbeat = heartbeat
+        self._secret = secret
+        self._last_counter = 0
         self._thread = None
         self._stop = threading.Event()
         self._last_snapshot = None
@@ -69,6 +128,8 @@ class NotchBridge:
         self._thread = threading.Thread(target=self._run, name="notch-bridge", daemon=True)
         self._thread.start()
         log.info("notch bridge started (state=%s, cmd=%s)", STATE_PATH, CMD_PATH)
+        if self._secret is None:
+            log.info("notch.cmd commands disabled: no command secret from NotchNest")
 
     def stop(self):
         self._stop.set()
@@ -84,24 +145,16 @@ class NotchBridge:
 
     # -- NotchNest -> Murmur -------------------------------------------------
     def _pump_commands(self):
-        try:
-            if not os.path.exists(CMD_PATH):
-                return
-            with open(CMD_PATH, "r", encoding="utf-8") as fh:
-                raw = fh.read().strip()
-            os.remove(CMD_PATH)
-        except FileNotFoundError:
-            return
-        except Exception:
-            log.exception("failed reading notch command")
-            return
-
+        raw = self._take_command_file()
         if not raw:
             return
-        cmd = raw.lower()
+        command = self._authenticate(raw)
+        if command is None:
+            return
+        cmd = command.lower()
 
         if cmd.startswith("set "):
-            self._apply_setting(raw)
+            self._apply_setting(command)
             return
 
         actions = {
@@ -109,7 +162,6 @@ class NotchBridge:
             "start": self.controller.ptt_start,
             "stop": self.controller.ptt_stop,
             "cancel": self.controller.cancel,
-            "axdump": self._ax_dump_spotify,
         }
         fn = actions.get(cmd)
         if fn is None:
@@ -121,79 +173,55 @@ class NotchBridge:
         except Exception:
             log.exception("notch command %s raised", cmd)
 
-    def _ax_dump_spotify(self):
-        """Debug helper: dump Spotify's accessibility buttons to
-        ~/.murmur/axdump.json. Runs with NotchNest's Accessibility grant since
-        this process is its child. Used to locate the Like button reliably."""
-        out_path = os.path.join(CONFIG_DIR, "axdump.json")
+    def _take_command_file(self) -> str | None:
+        """Reads notch.cmd and deletes it, whatever it held. Doesn't follow a
+        symlink or block on a FIFO left in its place, and reads one line's
+        worth at most."""
+        if not os.path.lexists(CMD_PATH):
+            return None
+        raw = None
         try:
-            from ApplicationServices import (
-                AXUIElementCreateApplication,
-                AXUIElementCopyAttributeValue,
-                AXUIElementSetAttributeValue,
-            )
-            import AppKit
+            fd = os.open(CMD_PATH, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                if stat.S_ISREG(os.fstat(fd).st_mode):
+                    raw = os.read(fd, MAX_CMD_BYTES).decode("utf-8", "replace").strip()
+            finally:
+                os.close(fd)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            log.warning("notch command ignored: notch.cmd isn't a readable file")
+        finally:
+            try:
+                os.remove(CMD_PATH)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                log.warning("could not delete notch.cmd")
+        return raw
 
-            apps = [a for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications()
-                    if a.bundleIdentifier() == "com.spotify.client"]
-            if not apps:
-                self._write_json(out_path, {"error": "spotify not running"})
-                return
-            root = AXUIElementCreateApplication(apps[0].processIdentifier())
-
-            def attr(el, name):
-                err, val = AXUIElementCopyAttributeValue(el, name, None)
-                return val if err == 0 else None
-
-            buttons = []
-            roles = {}
-
-            def walk(el, depth):
-                if depth > 40 or len(buttons) > 4000:
-                    return
-                role = str(attr(el, "AXRole") or "?")
-                roles[role] = roles.get(role, 0) + 1
-                if role in ("AXButton", "AXCheckBox", "AXToggle", "AXRadioButton"):
-                    buttons.append({
-                        "role": role,
-                        "title": str(attr(el, "AXTitle") or ""),
-                        "desc": str(attr(el, "AXDescription") or ""),
-                        "help": str(attr(el, "AXHelp") or ""),
-                    })
-                for child in (attr(el, "AXChildren") or []):
-                    walk(child, depth + 1)
-
-            # Chromium/CEF exposes the web a11y tree lazily, only after an
-            # assistive client pokes it — set the wake-up flags and retry.
-            windows = []
-            for attempt in range(4):
-                for flag in ("AXManualAccessibility", "AXEnhancedUserInterface"):
-                    try:
-                        AXUIElementSetAttributeValue(root, flag, True)
-                    except Exception:
-                        pass
-                time.sleep(2.0)
-                buttons.clear()
-                roles.clear()
-                windows = list(attr(root, "AXWindows") or [])
-                for window in windows:
-                    walk(window, 0)
-                if buttons:
-                    break
-            self._write_json(out_path, {
-                "windows": len(windows), "roles": roles, "buttons": buttons,
-            })
-            log.info("axdump: %d windows, %d buttons", len(windows), len(buttons))
-        except Exception as e:
-            log.exception("axdump failed")
-            self._write_json(out_path, {"error": repr(e)})
-
-    def _write_json(self, path, payload):
-        try:
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, ensure_ascii=False)
-        except Exception:
-            log.exception("axdump write failed")
+    def _authenticate(self, raw: str) -> str | None:
+        """The command in a correctly signed, fresh notch.cmd line, else None.
+        Rejections are logged without the line: it didn't come from NotchNest,
+        and whatever it says doesn't belong in the log."""
+        if self._secret is None:
+            log.warning("notch command ignored: commands are disabled (no secret)")
+            return None
+        parts = raw.split(" ", 2)
+        if len(parts) != 3 or not _COUNTER.fullmatch(parts[0]) or not _MAC.fullmatch(parts[1]):
+            log.warning("notch command ignored: not signed")
+            return None
+        counter, mac, command = parts
+        expected = hmac.new(self._secret, f"{counter} {command}".encode(),
+                            hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(mac.encode(), expected.encode()):
+            log.warning("notch command ignored: wrong signature")
+            return None
+        if int(counter) <= self._last_counter:
+            log.warning("notch command ignored: replayed (counter %s)", counter)
+            return None
+        self._last_counter = int(counter)
+        return command
 
     def _apply_setting(self, raw: str):
         """`set <dotted.key> <json-value>` — writes through the comment-
