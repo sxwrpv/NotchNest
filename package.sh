@@ -43,6 +43,13 @@ ZIP_SHA=$(shasum -a 256 "dist/$NAME.zip" | cut -d' ' -f1)
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHA256@/$ZIP_SHA/g" Packaging/install.sh.in > dist/install.sh
 chmod 755 dist/install.sh
 bash -n dist/install.sh
+# macOS's bash 3.2 reads UTF-8 bytes right after "$NAME" as part of the name
+# under a UTF-8 locale, so "$VERSION…" dies as unbound (set -u) on users' Macs
+# while passing in a C-locale shell. Variables before non-ASCII need ${NAME}.
+if LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~]' dist/install.sh; then
+    echo "install.sh: put braces around the variables above (\${NAME})." >&2
+    exit 1
+fi
 
 cd dist
 shasum -a 256 "$NAME.dmg" "$NAME.zip" install.sh | tee "$NAME.sha256"
