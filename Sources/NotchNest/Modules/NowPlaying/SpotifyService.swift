@@ -52,24 +52,32 @@ final class SpotifyService: ObservableObject {
 
     init(settings: SettingsStore) {
         self.settings = settings
-        moveLegacyTokensToKeychain()
-        if Keychain.string(for: Keys.refresh) != nil {
+        // Existence only: reading a token at launch would wait for Keychain
+        // approval after every update and freeze the app until answered.
+        if Keychain.exists(Keys.refresh) || defaults.string(forKey: Keys.legacyRefresh) != nil {
             connection = .connected
         }
         webAPIBlocked = defaults.bool(forKey: Keys.webBlocked)
+        Task { await moveLegacyTokensToKeychain() }
     }
 
     /// Older versions stored the tokens in UserDefaults, readable from the
     /// preferences file and its backups. Move them, deleting each one only
     /// once the Keychain holds it.
-    private func moveLegacyTokensToKeychain() {
+    private func moveLegacyTokensToKeychain() async {
         for (legacy, account) in [(Keys.legacyAccess, Keys.access), (Keys.legacyRefresh, Keys.refresh)] {
             guard let token = defaults.string(forKey: legacy) else { continue }
-            if Keychain.set(token, for: account) {
+            if await Self.keychain({ Keychain.set(token, for: account) }) {
                 defaults.removeObject(forKey: legacy)
                 nnlog("spotify: moved \(account) to the keychain")
             }
         }
+    }
+
+    /// Runs a Keychain call off the main thread: it may wait for the user to
+    /// approve this build (see `Keychain`).
+    nonisolated private static func keychain<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await Task.detached(priority: .userInitiated, operation: work).value
     }
 
     private var clientID: String {
@@ -432,8 +440,10 @@ final class SpotifyService: ObservableObject {
     }
 
     func disconnect() {
-        Keychain.delete(Keys.access)
-        Keychain.delete(Keys.refresh)
+        Task.detached {
+            Keychain.delete(Keys.access)
+            Keychain.delete(Keys.refresh)
+        }
         defaults.removeObject(forKey: Keys.expiry)
         likedCache = [:]
         stopListener()
@@ -444,7 +454,7 @@ final class SpotifyService: ObservableObject {
         stopListener()
         pendingVerifier = nil
         pendingState = nil
-        connection = Keychain.string(for: Keys.refresh) != nil ? .connected : .disconnected
+        connection = Keychain.exists(Keys.refresh) ? .connected : .disconnected
         lastError = message
     }
 
@@ -567,13 +577,13 @@ final class SpotifyService: ObservableObject {
             failConnect("Token exchange failed — check the Client ID and redirect URI.")
             return
         }
-        store(result)
+        await store(result)
         connection = .connected
         lastError = nil
     }
 
     private func refreshAccessToken() async -> String? {
-        guard let refresh = Keychain.string(for: Keys.refresh) else { return nil }
+        guard let refresh = await Self.keychain({ Keychain.string(for: Keys.refresh) }) else { return nil }
         let result = await tokenRequest([
             "grant_type": "refresh_token",
             "refresh_token": refresh,
@@ -584,13 +594,13 @@ final class SpotifyService: ObservableObject {
             lastError = "Spotify session expired — connect again."
             return nil
         }
-        store(result)
+        await store(result)
         return result.access
     }
 
     private func validAccessToken() async -> String? {
         if Date().timeIntervalSince1970 < defaults.double(forKey: Keys.expiry) - 60,
-           let token = Keychain.string(for: Keys.access) {
+           let token = await Self.keychain({ Keychain.string(for: Keys.access) }) {
             return token
         }
         return await refreshAccessToken()
@@ -602,12 +612,13 @@ final class SpotifyService: ObservableObject {
         var expiresIn: Double
     }
 
-    private func store(_ tokens: TokenSet) {
-        Keychain.set(tokens.access, for: Keys.access)
-        defaults.set(Date().timeIntervalSince1970 + tokens.expiresIn, forKey: Keys.expiry)
-        if let refresh = tokens.refresh {
-            Keychain.set(refresh, for: Keys.refresh)
+    private func store(_ tokens: TokenSet) async {
+        let access = tokens.access, refresh = tokens.refresh
+        await Self.keychain {
+            Keychain.set(access, for: Keys.access)
+            if let refresh { Keychain.set(refresh, for: Keys.refresh) }
         }
+        defaults.set(Date().timeIntervalSince1970 + tokens.expiresIn, forKey: Keys.expiry)
     }
 
     private func tokenRequest(_ params: [String: String]) async -> TokenSet? {

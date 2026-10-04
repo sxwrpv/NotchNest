@@ -10,6 +10,10 @@ It downloads the app, checks its SHA-256, installs it into Applications and open
 
 **Prefer a disk image?** Download `NotchNest-*.dmg` below. Macs block un-notarized apps that were downloaded in a browser, so the first open needs **System Settings → Privacy & Security → Open Anyway** (see *READ ME FIRST* inside the image).
 
+## What's new in 1.2.1
+
+- **Fixes a launch freeze.** If you had connected Spotify's Web API, 1.2.0 could sit frozen for about a minute after an update while it waited for Keychain approval. NotchNest no longer reads the Spotify tokens at launch, and it only asks the Keychain for them when the Web API is actually used, without ever blocking the app.
+
 ## What's new in 1.2
 
 A privacy and security release. Everything still runs on your Mac; now less of what you say and copy stays behind.
