@@ -1,11 +1,24 @@
 import Foundation
 import Security
 
-/// Secrets in the login keychain, as generic passwords under one service.
-/// Only this app (by its code signature) can read them without a prompt, and
-/// they stay out of preferences files, backups of them and diagnostics.
+/// Secrets in the login keychain, as generic passwords under one service,
+/// kept out of preferences files, their backups and diagnostics.
+///
+/// Reading or changing a secret can block until the user approves: without
+/// an Apple Team ID, macOS ties an item to the exact build that created it
+/// (its cdhash), so every update has to be allowed once. Never call `string`,
+/// `set` or `delete` on the main thread; `exists` needs no approval.
 enum Keychain {
     static let service = "com.notchnest.local"
+
+    /// Whether the item is there, from its attributes alone: no decryption,
+    /// so no approval prompt.
+    static func exists(_ account: String) -> Bool {
+        var query = baseQuery(account)
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
 
     static func string(for account: String) -> String? {
         var query = baseQuery(account)
