@@ -2,6 +2,8 @@ import Foundation
 import AppKit
 import AVFoundation
 import Combine
+import CryptoKit
+import Security
 
 enum DictationState: String {
     case idle, listening, processing, command, offline
@@ -40,7 +42,7 @@ struct DictationSettings: Equatable {
 /// Owns the dictation engine (the merged Murmur code, shipped inside the app
 /// bundle and provisioned by `EngineInstaller`): spawns it headless as a child
 /// process, restarts it if it dies, and talks to it through two files in
-/// ~/.murmur (state mirror + command file).
+/// ~/.murmur (state mirror + signed command file).
 final class DictationManager: ObservableObject {
     @Published private(set) var state: DictationState = .offline
     /// This session's transcripts, newest first. Memory only: the engine
@@ -67,6 +69,11 @@ final class DictationManager: ObservableObject {
     private var engine: Process?
     private var stoppingEngine = false
     private var pendingCommands: [String] = []
+    /// The running engine's per-launch key, handed over on its stdin; it
+    /// rejects any notch.cmd command not signed with it. nil while no engine runs.
+    private var commandSigningKey: SymmetricKey?
+    /// Numbers this engine's commands; it ignores one that doesn't grow.
+    private var commandCounter: UInt64 = 0
 
     func start() {
         startEngine()
@@ -136,6 +143,8 @@ final class DictationManager: ObservableObject {
         proc.arguments = ["-u", "main.py", "--headless"]
         proc.currentDirectoryURL = EngineRuntime.bundledEngine
         proc.environment = EngineRuntime.pythonEnvironment
+        let stdin = Pipe()   // carries the command secret; see handOverCommandSecret(to:)
+        proc.standardInput = stdin
         proc.standardOutput = FileHandle.nullDevice   // engine keeps its own log
         proc.standardError = FileHandle.nullDevice
         proc.terminationHandler = { [weak self] p in
@@ -143,6 +152,7 @@ final class DictationManager: ObservableObject {
                 // A replaced engine's exit isn't news — only react to the current one.
                 guard let self, self.engine === p else { return }
                 self.engine = nil
+                self.commandSigningKey = nil
                 guard !self.stoppingEngine else { return }
                 NSLog("NotchNest: dictation engine exited (\(p.terminationStatus)) — restarting in 5s")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
@@ -157,13 +167,45 @@ final class DictationManager: ObservableObject {
             NSLog("NotchNest: dictation engine started (pid \(proc.processIdentifier))")
         } catch {
             NSLog("NotchNest: failed to start dictation engine: \(error)")
+            return
         }
+        // Without a key the engine still dictates from its hotkeys; it just
+        // ignores notch.cmd, so the mic button and settings stop working.
+        commandSigningKey = Self.handOverCommandSecret(to: stdin)
+        commandCounter = 0
     }
 
     func stopEngine() {
         stoppingEngine = true
         engine?.terminate()
         engine = nil
+        commandSigningKey = nil
+    }
+
+    /// Makes a random 32-byte secret, writes it into the engine's stdin as one
+    /// hex line and closes our end of the pipe. Only NotchNest holds that pipe,
+    /// whereas any process of this user can read a file, another process's
+    /// arguments or, with `ps eww`, its environment. Returns the key to sign
+    /// commands with, or nil if the hand-over failed.
+    private static func handOverCommandSecret(to pipe: Pipe) -> SymmetricKey? {
+        let writer = pipe.fileHandleForWriting
+        defer { try? writer.close() }
+        var secret = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, secret.count, &secret) == errSecSuccess else {
+            NSLog("NotchNest: no random bytes for the dictation command secret")
+            return nil
+        }
+        // An engine that has already exited gets EPIPE, not a SIGPIPE that
+        // would take NotchNest down with it.
+        _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
+        let line = secret.map { String(format: "%02x", $0) }.joined() + "\n"
+        do {
+            try writer.write(contentsOf: Data(line.utf8))
+        } catch {
+            NSLog("NotchNest: couldn't hand the dictation engine its command secret: \(error)")
+            return nil
+        }
+        return SymmetricKey(data: secret)
     }
 
     /// Stops the engine and starts a fresh one once the old process is gone
@@ -292,22 +334,52 @@ final class DictationManager: ObservableObject {
         }
     }
 
+    /// Settings wait for a running engine; it has to sign them with its key.
     private func flushPendingCommands() {
-        guard !pendingCommands.isEmpty,
+        guard !pendingCommands.isEmpty, commandSigningKey != nil,
               !FileManager.default.fileExists(atPath: cmdURL.path) else { return }
-        let next = pendingCommands.removeFirst()
+        writeCommand(pendingCommands.removeFirst())
+    }
+
+    /// Toggle/cancel don't wait: a recording shouldn't start whenever an
+    /// engine next comes up.
+    private func sendCommand(_ command: String) {
+        guard commandSigningKey != nil else {
+            NSLog("NotchNest: dictation engine isn't running; dropped \"\(command)\"")
+            return
+        }
+        writeCommand(command)
+    }
+
+    /// Writes `<counter> <mac> <command>` to notch.cmd, where mac is the hex
+    /// HMAC-SHA256 of "<counter> <command>" under the running engine's key
+    /// (format and rationale: the docstring of murmur/notch_bridge.py).
+    private func writeCommand(_ command: String) {
+        guard let key = commandSigningKey else { return }
+        commandCounter += 1
+        let mac = HMAC<SHA256>.authenticationCode(
+            for: Data("\(commandCounter) \(command)".utf8), using: key)
+        let hex = mac.map { String(format: "%02x", $0) }.joined()
         do {
-            try next.write(to: cmdURL, atomically: true, encoding: .utf8)
+            try Self.writePrivately(Data("\(commandCounter) \(hex) \(command)".utf8), to: cmdURL)
         } catch {
             NSLog("NotchNest: failed to write dictation command: \(error)")
         }
     }
 
-    private func sendCommand(_ command: String) {
-        do {
-            try command.write(to: cmdURL, atomically: true, encoding: .utf8)
-        } catch {
-            NSLog("NotchNest: failed to write dictation command: \(error)")
+    /// Writes through a temp file renamed into place, so the engine never reads
+    /// half a command. mkstemp creates it 0600: readable by this user only.
+    private static func writePrivately(_ data: Data, to url: URL) throws {
+        var template = Array((url.deletingLastPathComponent().path + "/.notch.cmd.XXXXXX").utf8CString)
+        let fd = mkstemp(&template)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let tmp = template.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        let written = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        close(fd)
+        guard written == data.count, rename(tmp, url.path) == 0 else {
+            let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+            unlink(tmp)
+            throw POSIXError(code)
         }
     }
 

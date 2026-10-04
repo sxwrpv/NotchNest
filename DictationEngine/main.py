@@ -76,6 +76,13 @@ def main():
     if already_running():
         print("Murmur is already running.")
         sys.exit(0)
+    headless = "--headless" in sys.argv or os.environ.get("MURMUR_HEADLESS") == "1"
+    # NotchNest writes a per-launch secret line into our stdin and signs every
+    # notch.cmd command with it. Only headless runs look for it; anything else
+    # (a terminal, run.sh) gets None and the bridge ignores notch.cmd.
+    from murmur.notch_bridge import read_secret
+
+    command_secret = read_secret(sys.stdin) if headless else None
     first_run = bootstrap_config()
     config = Config(CONFIG_PATH)
     setup_logging(config.get("logging.level", "INFO"))
@@ -103,10 +110,12 @@ def main():
 
     # Optional NotchNest bridge — additive and crash-guarded; a failure here
     # must never affect dictation.
+    if headless and command_secret is None:
+        log.warning("no command secret on stdin — notch.cmd commands disabled")
     try:
         from murmur.notch_bridge import NotchBridge
 
-        NotchBridge(controller).start()
+        NotchBridge(controller, secret=command_secret).start()
     except Exception:
         log.exception("notch bridge failed to start (non-fatal)")
 
@@ -120,7 +129,6 @@ def main():
     config.on_reload(_on_reload)
     config.start_watching()
 
-    headless = "--headless" in sys.argv or os.environ.get("MURMUR_HEADLESS") == "1"
     if headless:
         # NotchNest is the UI: no menu-bar icon, no dock presence. We still
         # need the AppKit run loop on the main thread for the hotkey event
