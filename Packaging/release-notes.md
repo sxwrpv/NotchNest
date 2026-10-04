@@ -10,6 +10,14 @@ It downloads the app, checks its SHA-256, installs it into Applications and open
 
 **Prefer a disk image?** Download `NotchNest-*.dmg` below. Macs block un-notarized apps that were downloaded in a browser, so the first open needs **System Settings → Privacy & Security → Open Anyway** (see *READ ME FIRST* inside the image).
 
+## What's new in 1.3
+
+- **NotchNest now updates itself.** Once a day it checks GitHub for a new version. When there is one, click **Update** in the menu-bar menu or in Settings → General. It downloads the release, checks the download against its checksum and confirms it's signed with NotchNest's own certificate, then installs it and restarts. You can turn the daily check off in Settings → General. (Coming from 1.2 or earlier, run the one-line install above one last time.)
+- **The microphone is on only while you dictate.** New installs open the mic when you start dictating and close it when you stop, so the orange microphone indicator no longer stays lit the whole time NotchNest runs. The old behaviour catches the half second before you press the key; to keep it, turn on **Keep microphone ready** in Settings → Dictation. Existing installs keep their current setting, so switch it off there if you want the new behaviour.
+- **Only NotchNest can control dictation.** Until now, any program on your Mac could start a recording through NotchNest's dictation engine, using NotchNest's microphone permission. The engine now obeys only commands that NotchNest signs with a secret it hands over at launch.
+- **Uninstall from Settings.** **Uninstall NotchNest…** removes the app, its dictation engine and models, and everything it saved.
+- **Report a Problem…** in Settings opens a GitHub issue with your NotchNest, macOS and chip versions filled in. **Show Logs** finds the log files, which never contain what you dictated.
+
 ## What's new in 1.2.1
 
 - **Fixes a launch freeze.** If you had connected Spotify's Web API, 1.2.0 could sit frozen for about a minute after an update while it waited for Keychain approval. NotchNest no longer reads the Spotify tokens at launch, and it only asks the Keychain for them when the Web API is actually used, without ever blocking the app.

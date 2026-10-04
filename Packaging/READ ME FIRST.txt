@@ -26,7 +26,11 @@ Dictate: hold RIGHT OPTION (⌥) and talk, or double-tap it to toggle.
 The text is copied to your clipboard and shown in the notch.
 Hover the notch to open it; the menu-bar icon has Settings.
 
-Uninstall: quit NotchNest, delete it from Applications, then remove
+Updates: NotchNest checks for a new version once a day. When there is one,
+click "Update" in the menu-bar menu or in Settings → General.
+
+Uninstall: Settings → Uninstall NotchNest… removes the app and everything it
+saved. By hand: quit NotchNest, delete it from Applications, then remove
   ~/Library/Application Support/NotchNest
   ~/Library/Caches/NotchNest
   ~/.murmur

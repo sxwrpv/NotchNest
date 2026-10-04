@@ -473,9 +473,12 @@ class Controller:
 
     # ---- config hot-reload --------------------------------------------------
     def on_config_reload(self):
-        # transcriber picks up model changes lazily; audio stream may need a restart
-        if self.config.get("audio.always_on_capture", True):
+        # transcriber picks up model changes lazily; the audio stream follows
+        # always_on_capture both ways
+        if self.audio.always_on():
             self.audio.ensure_stream()
+        else:
+            self.audio.release_if_idle()
         # pill position may have been edited by hand (or by a finished drag)
         self.overlay.refresh_position()
         log.info("controller applied reloaded config")

@@ -15,10 +15,10 @@ DEFAULTS: dict = {
     "audio": {
         "sample_rate": 16000,
         "preroll_ms": 500,
-        # Keep a tiny always-on capture stream so the 500ms before the hotkey
-        # isn't lost. Set to false if you'd rather the mic only open while
-        # recording (loses pre-roll).
-        "always_on_capture": True,
+        # Open the mic only while recording. True keeps a tiny always-on
+        # stream so the 500ms before the hotkey isn't lost, but macOS then
+        # shows its microphone indicator the whole time the engine runs.
+        "always_on_capture": False,
         "input_device": None,  # null = system default
         "min_utterance_s": 0.35,
     },

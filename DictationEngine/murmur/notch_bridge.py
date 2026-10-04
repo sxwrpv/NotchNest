@@ -68,6 +68,7 @@ SETTINGS_KEYS = [
     "llm.backend",
     "insertion.mode",
     "ui.show_notifications",
+    "audio.always_on_capture",
 ]
 
 # How long a finished transcript stays in notch.json. NotchNest reads the file
