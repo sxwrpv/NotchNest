@@ -1,9 +1,12 @@
 """Microphone capture via sounddevice.
 
-A small always-on input stream feeds a rolling ring buffer (~500ms) so the
-first word isn't clipped when the hotkey fires. While recording, callback
-blocks are appended to a growing list; `stop_recording()` returns the whole
-utterance (pre-roll + recording) as one float32 mono array at 16kHz.
+By default the input stream opens when a recording starts and closes when it
+ends or is canceled, so macOS's microphone indicator shows only while you
+dictate. With audio.always_on_capture the stream stays open and feeds a
+rolling ring buffer (~500ms) so the first word isn't clipped when the hotkey
+fires. While recording, callback blocks are appended to a growing list;
+`stop_recording()` returns the whole utterance (pre-roll, if any, plus the
+recording) as one float32 mono array at 16kHz.
 """
 
 import collections
@@ -155,9 +158,21 @@ class AudioCapture:
                 pass
             self._stream = None
 
+    def always_on(self) -> bool:
+        """Whether the stream stays open between recordings (for pre-roll).
+        Off by default: an open stream keeps macOS's microphone indicator lit
+        the whole time the engine runs."""
+        return bool(self.config.get("audio.always_on_capture", False))
+
     def start_if_always_on(self) -> None:
-        if self.config.get("audio.always_on_capture", True):
+        if self.always_on():
             self.ensure_stream()
+
+    def release_if_idle(self) -> None:
+        """Close the stream unless it's wanted always-on or a recording is in
+        progress (e.g. after always_on_capture is switched off)."""
+        if not self.always_on() and not self._recording:
+            self.close_stream()
 
     # -- recording ---------------------------------------------------------
     def start_recording(self) -> bool:
@@ -178,7 +193,7 @@ class AudioCapture:
             chunks, self._chunks = self._chunks, []
             self._ring.clear()
             self._ring_samples = 0
-        if not self.config.get("audio.always_on_capture", True):
+        if not self.always_on():
             self.close_stream()
         if not chunks:
             return np.zeros(0, dtype=np.float32)
@@ -188,6 +203,7 @@ class AudioCapture:
         with self._lock:
             self._recording = False
             self._chunks = []
+        self.release_if_idle()
 
     @property
     def is_recording(self) -> bool:

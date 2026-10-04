@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Status bar
 
+    @MainActor
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -60,11 +61,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    accessibilityDescription: "NotchNest")
         }
 
+        // @Published sends the new value before the property changes, so build
+        // from the value it hands over.
+        env.updates.$phase
+            .receive(on: RunLoop.main)
+            .sink { [weak self] phase in self?.buildMenu(updatePhase: phase) }
+            .store(in: &cancellables)
+    }
+
+    @MainActor
+    private func buildMenu(updatePhase: UpdateChecker.Phase) {
         let menu = NSMenu()
+        if case .available(let release) = updatePhase {
+            menu.addItem(withTitle: "Update to NotchNest \(release.version)…",
+                         action: #selector(updateApp), keyEquivalent: "")
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "Toggle Notch", action: #selector(toggleNotch), keyEquivalent: "n")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Setup Assistant…", action: #selector(openSetup), keyEquivalent: "")
+        menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit NotchNest", action: #selector(quit), keyEquivalent: "q")
         for item in menu.items { item.target = self }
@@ -73,6 +90,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleNotch() {
         env.notch.toggle()
+    }
+
+    @MainActor @objc private func updateApp() {
+        if env.updates.canInstall {
+            env.updates.install()
+        } else {
+            env.updates.openReleasePage()
+        }
+    }
+
+    /// Shows the answer in Settings → General.
+    @MainActor @objc private func checkForUpdates() {
+        openSettings()
+        Task { await env.updates.check(userInitiated: true) }
     }
 
     @objc private func quit() {

@@ -13,6 +13,7 @@ final class AppEnvironment: ObservableObject {
     let pomodoro: PomodoroManager
     let notes: NotesManager
     let calendar: CalendarManager
+    let updates: UpdateChecker
     let notch: NotchViewModel
 
     // Constructed from the app delegate at launch; main-actor so it can build
@@ -30,9 +31,11 @@ final class AppEnvironment: ObservableObject {
         self.pomodoro = PomodoroManager(settings: settings)
         self.notes = NotesManager()
         self.calendar = CalendarManager()
+        self.updates = UpdateChecker()
         self.notch = NotchViewModel(settings: settings)
     }
 
+    @MainActor
     func startServices() {
         nowPlaying.start()
         // Restart rather than start, so a repaired environment is picked up too.
@@ -43,6 +46,7 @@ final class AppEnvironment: ObservableObject {
         if settings.isEnabled(.dictation), !engineInstaller.isReady { engineInstaller.install() }
         clipboard.start()
         calendar.start()
+        updates.start()
     }
 
     /// Applies the SwiftUI environment objects a view hierarchy needs.
@@ -59,6 +63,7 @@ final class AppEnvironment: ObservableObject {
             .environmentObject(pomodoro)
             .environmentObject(notes)
             .environmentObject(calendar)
+            .environmentObject(updates)
             .environmentObject(notch)
     }
 }

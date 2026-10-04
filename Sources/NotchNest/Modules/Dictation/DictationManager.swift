@@ -37,6 +37,8 @@ struct DictationSettings: Equatable {
     var backend = "auto"
     var insertionMode = "type"
     var notifications = true
+    /// audio.always_on_capture: mic stays open for pre-roll (and the indicator stays lit).
+    var keepMicOpen = false
 }
 
 /// Owns the dictation engine (the merged Murmur code, shipped inside the app
@@ -87,6 +89,24 @@ final class DictationManager: ObservableObject {
         timer?.invalidate()
         timer = nil
         stopEngine()
+    }
+
+    /// `stop()`, then `done` on the main thread once the engine process has
+    /// exited (killed outright if it ignores SIGTERM for 3 s).
+    func stop(then done: @escaping () -> Void) {
+        let old = engine
+        stop()
+        DispatchQueue.global(qos: .userInitiated).async {
+            if let old {
+                let deadline = Date().addingTimeInterval(3)
+                while old.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+                if old.isRunning {
+                    kill(old.processIdentifier, SIGKILL)
+                    old.waitUntilExit()
+                }
+            }
+            DispatchQueue.main.async(execute: done)
+        }
     }
 
     // MARK: - Microphone permission
@@ -274,6 +294,7 @@ final class DictationManager: ObservableObject {
             s.backend = raw["llm.backend"] as? String ?? s.backend
             s.insertionMode = raw["insertion.mode"] as? String ?? s.insertionMode
             s.notifications = raw["ui.show_notifications"] as? Bool ?? s.notifications
+            s.keepMicOpen = raw["audio.always_on_capture"] as? Bool ?? s.keepMicOpen
             if s != settings { settings = s }
         }
 
@@ -328,6 +349,7 @@ final class DictationManager: ObservableObject {
             case "llm.backend":            s.backend = value as? String ?? s.backend
             case "insertion.mode":         s.insertionMode = value as? String ?? s.insertionMode
             case "ui.show_notifications":  s.notifications = value as? Bool ?? s.notifications
+            case "audio.always_on_capture": s.keepMicOpen = value as? Bool ?? s.keepMicOpen
             default: break
             }
             settings = s

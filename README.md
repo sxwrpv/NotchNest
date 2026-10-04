@@ -106,6 +106,31 @@ browser needs System Settings → Privacy & Security → **Open Anyway** on firs
 (macOS 15+) or right-click → Open (macOS 14) — the one-line installer avoids this. Builds signed with the same "NotchNest Dev"
 certificate keep users' permission grants across updates.
 
+## Updates and uninstalling
+
+**Updates.** Once a day an installed copy checks GitHub for a newer release (one
+anonymous request to `api.github.com`; turn it off in Settings → General). When
+there is one, **Update** appears in the menu-bar menu and in Settings → General.
+It downloads the release zip and checks it against the SHA-256 that GitHub
+publishes. It also checks that the new app has the same bundle id and is signed
+with the same certificate as the running one (its designated requirement). Only
+then does it swap the app in place and relaunch. A build signed ad hoc matches
+only itself, so it offers the release page instead. So does a copy whose folder
+it can't write to.
+
+**Uninstalling.** Settings → **Uninstall NotchNest…** removes the dictation
+engine and its Python (`~/Library/Application Support/NotchNest`, which also
+holds File Tray saves), `~/Library/Caches/NotchNest`, `~/.murmur`, the logs,
+the preferences, the Keychain items and the login item. It resets the privacy
+grants it can, deletes the downloaded models if you leave that box ticked, and
+moves the app to the Trash. Launch with
+`open --env NOTCHNEST_UNINSTALL_DRY_RUN=1 NotchNest.app` to rehearse it: the
+log then lists what would go, and nothing is removed.
+
+**Reporting a problem.** Settings → **Report a Problem…** opens a new GitHub issue
+pre-filled with the NotchNest, macOS and chip versions. **Show Logs** selects
+the log files in Finder.
+
 ## Permissions (the setup assistant asks for these)
 
 - **Microphone** + **Accessibility** → dictation (hotkeys, text insertion) and the Spotify Like button.
@@ -189,6 +214,13 @@ Everything runs on the Mac. What NotchNest does to keep it that way:
   words while debugging). `~/.murmur` and its files are readable only by you.
   The engine hands each transcript to NotchNest and clears it from `notch.json`
   30 seconds later; NotchNest keeps the session's history in memory only.
+- **The microphone is open only while you dictate** (the default for new
+  installs), so macOS's orange indicator shows only then. **Keep microphone
+  ready** (Settings → Dictation) keeps it open to catch the half second before
+  the key, with the indicator lit the whole time.
+- **One network request a day, if you want it.** The update check asks
+  `api.github.com` for the latest release, with no cookies and nothing about
+  you. Updates install only if they're signed with NotchNest's own certificate.
 - **Only NotchNest can start a recording.** The engine records with
   NotchNest's microphone grant, so it obeys only commands signed with a
   secret NotchNest hands it at launch (see "Dictation engine"). Another

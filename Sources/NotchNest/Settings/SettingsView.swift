@@ -6,6 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject var spotify: SpotifyService
     @EnvironmentObject var dictation: DictationManager
     @EnvironmentObject var installer: EngineInstaller
+    @EnvironmentObject var updates: UpdateChecker
     @State private var confirmClipboardDelete = false
 
     private static let hotkeyOptions = [
@@ -38,6 +39,8 @@ struct SettingsView: View {
 
                 section("General", nil) {
                     Toggle("Launch at login", isOn: $settings.launchAtLogin)
+                    Toggle("Check for updates automatically", isOn: $updates.checksAutomatically)
+                    updateRow
                 }
 
                 section("Reveal Animation", "Tune how the notch opens and closes") {
@@ -156,11 +159,27 @@ struct SettingsView: View {
                             value: $settings.longBreakMinutes, in: 5...45, step: 5)
                 }
 
+                section("Help", nil) {
+                    HStack {
+                        Button("Report a Problem…") {
+                            ProblemReport.open(engineInstalled: installer.isReady,
+                                               engineRunning: dictation.murmurRunning)
+                        }
+                        Button("Show Logs") { ProblemReport.revealLogs() }
+                        Spacer()
+                    }
+                    Text("A report opens as a new GitHub issue with your NotchNest, macOS and chip versions filled in; nothing is sent until you submit it. The logs never contain what you dictated.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 HStack {
+                    Button("Uninstall NotchNest…") { Uninstaller.confirmAndRun(dictation: dictation) }
+                        .help("Removes NotchNest, its dictation engine and models, and everything it saved")
                     Spacer()
                     Button("Quit NotchNest") { NSApp.terminate(nil) }
                         .foregroundStyle(.red)
-                    Spacer()
                 }
                 .padding(.top, 4)
             }
@@ -182,6 +201,57 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Updates
+
+    @ViewBuilder
+    private var updateRow: some View {
+        HStack(spacing: 8) {
+            switch updates.phase {
+            case .checking, .installing:
+                ProgressView().controlSize(.small)
+            default:
+                EmptyView()
+            }
+            Text(updateStatus)
+                .font(.system(size: 12))
+                .foregroundStyle(updateFailed ? Color.red : Color.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            switch updates.phase {
+            case .available:
+                Button("Release Notes") { updates.openReleasePage() }
+                if updates.canInstall {
+                    Button("Update Now") { updates.install() }
+                } else {
+                    Button("Download") { updates.openReleasePage() }
+                }
+            case .failed:
+                Button("Open Releases") { updates.openReleasePage() }
+            case .checking, .installing:
+                EmptyView()
+            case .idle, .upToDate:
+                Button("Check Now") { Task { await updates.check(userInitiated: true) } }
+            }
+        }
+    }
+
+    private var updateStatus: String {
+        switch updates.phase {
+        case .idle: return "NotchNest \(updates.currentVersion)"
+        case .checking: return "Checking for updates…"
+        case .upToDate: return "NotchNest \(updates.currentVersion) is up to date"
+        case .available(let release):
+            return "NotchNest \(release.version) is available (you have \(updates.currentVersion))"
+        case .installing(let release): return "Installing \(release.version)… NotchNest will restart"
+        case .failed(let message): return message
+        }
+    }
+
+    private var updateFailed: Bool {
+        if case .failed = updates.phase { return true }
+        return false
+    }
+
     // MARK: - Dictation engine settings
 
     @ViewBuilder
@@ -201,6 +271,11 @@ struct SettingsView: View {
         engineToggle("Live partial transcript", engine.partials, key: "asr.partials")
         engineToggle("AI cleanup", engine.cleanupEnabled, key: "llm.cleanup_enabled")
         engineToggle("Notifications", engine.notifications, key: "ui.show_notifications")
+        engineToggle("Keep microphone ready", engine.keepMicOpen, key: "audio.always_on_capture")
+        Text("Catches the half second before you press the key, but macOS then shows its microphone indicator the whole time NotchNest runs. Off: the mic opens only while you dictate.")
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         HStack(alignment: .top) {
             Text("Double-tap the dictation key to toggle, hold it for push-to-talk. Model changes re-download weights on first use.")
                 .font(.system(size: 10))

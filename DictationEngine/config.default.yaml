@@ -4,8 +4,9 @@
 
 audio:
   sample_rate: 16000
-  preroll_ms: 500          # audio kept from *before* the hotkey fires
-  always_on_capture: true  # required for pre-roll; set false to open mic only while recording
+  preroll_ms: 500          # audio kept from *before* the hotkey fires (always_on_capture only)
+  always_on_capture: false # true keeps the mic open for pre-roll, but macOS then shows the
+                           # orange mic indicator the whole time the engine runs
   input_device: null       # null = system default microphone
   min_utterance_s: 0.35    # recordings shorter than this are discarded
 

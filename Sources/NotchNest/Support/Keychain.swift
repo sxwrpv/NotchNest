@@ -53,6 +53,13 @@ enum Keychain {
         SecItemDelete(baseQuery(account) as CFDictionary)
     }
 
+    /// Every item NotchNest stored (uninstall).
+    static func deleteAll() {
+        let query = [kSecClass as String: kSecClassGenericPassword,
+                     kSecAttrService as String: service] as CFDictionary
+        for _ in 0..<16 where SecItemDelete(query) == errSecSuccess {}
+    }
+
     private static func baseQuery(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: service,
