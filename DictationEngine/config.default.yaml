@@ -94,7 +94,7 @@ styles:
 
 overlay:
   # NotchNest's notch is the dictation UI; the engine's own pill stays off.
-  enabled: true
+  enabled: false
   width: 400
   # Keep the status pill on screen at all times (small dim dot when idle,
   # full pill when listening/processing), not just during dictation.
